@@ -2,17 +2,12 @@
 
 # ========== OSC 设置 ==========
 OSC_IP = "127.0.0.1"
-OSC_PORT = 7000               # UE 的 OSC Server 监听端口
-OSC_LISTEN_PORT = 7001        # Python 接收测试端口
+OSC_PORT = 7000
 
 # ========== 摄像头 ==========
 CAMERA_ID = 0
 CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
-
-# ========== 录制设置 ==========
-SAVE_TO_FILE = False
-OUTPUT_FILE = "hand_data.json"
 
 # ========== 指令控制 ==========
 PRIMARY_HAND = "Right"          # 主控手 ("Right" 或 "Left")
@@ -47,7 +42,7 @@ BONE_CONNECTIONS = [
     (5, 9), (9, 13), (13, 17),               # 手掌横连
 ]
 
-# ========== 手指颜色 (拇指, 食指, 中指, 无名指, 小指) ==========
+# ========== 手指颜色 ==========
 FINGER_COLORS = [
     (255, 0, 255),    # 拇指 - 紫色
     (255, 165, 0),    # 食指 - 橙色

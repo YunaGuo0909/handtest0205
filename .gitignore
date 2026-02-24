@@ -6,9 +6,13 @@ __pycache__/
 # 模型文件（太大，不入库）
 hand_landmarker.task
 yolov8n.pt
+*.task
+*.pt
 
-# 录制数据（太大，不入库）
+# 数据文件
 hand_data.json
+*.json
+!pyproject.toml
 
 # IDE
 .vscode/
