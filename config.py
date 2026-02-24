@@ -11,15 +11,12 @@ CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
 
 # ========== 录制设置 ==========
-SAVE_TO_FILE = True
+SAVE_TO_FILE = False
 OUTPUT_FILE = "hand_data.json"
 
 # ========== 指令控制 ==========
 PRIMARY_HAND = "Right"          # 主控手 ("Right" 或 "Left")
 COMMAND_STABLE_FRAMES = 5       # 防抖: 连续N帧相同才切换指令
-
-# ========== GPU 设置 (YOLO版) ==========
-USE_GPU = True
 
 # ========== MediaPipe 模型 ==========
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
