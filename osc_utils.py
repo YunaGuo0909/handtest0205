@@ -20,20 +20,11 @@ class OSCSender:
 
     def send(self, move_value=0.0, command="none", gesture="unknown",
              palm_facing=False, num_hands=0):
-        """发送 OSC 消息到 UE
+        """发送单条 OSC 消息到 UE
 
-        Args:
-            move_value: 移动值 (1.0=前进, -1.0=后退, 0.0=停止)
-            command: 指令名称（调试用）
-            gesture: 手势名称（调试用）
-            palm_facing: 手掌朝向（调试用）
-            num_hands: 手的数量（调试用）
+        只发一条 /hand/move，避免多条消息触发回调互相覆盖。
         """
         self.client.send_message("/hand/move", move_value)
-
-        facing = "F" if palm_facing else "B"
-        debug = f"{command}|{gesture}|{facing}|{num_hands}"
-        self.client.send_message("/hand/debug", debug)
 
     def close(self):
         pass
