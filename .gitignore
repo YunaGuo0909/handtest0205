@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# 模型文件（太大，不入库）
+hand_landmarker.task
+yolov8n.pt
+
+# 录制数据（太大，不入库）
+hand_data.json
+
+# IDE
+.vscode/
+.idea/
+
+# uv
+uv.lock
