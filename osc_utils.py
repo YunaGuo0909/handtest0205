@@ -1,15 +1,13 @@
 # OSC 通信模块
-# 通过 OSC 协议向 UE 发送手势指令和追踪数据
+# 通过 OSC 协议向 UE 发送手势指令
 #
-# OSC 地址设计:
-#   /hand/command    (string)  → 游戏指令: "forward" / "backward" / "stop" / "none"
-#   /hand/gesture    (string)  → 手势名称: "fist" / "open" / ...
-#   /hand/palm       (int)     → 手掌朝向: 1=正面(手心朝镜头) / 0=背面
-#   /hand/hands      (int)     → 检测到的手数量
-#   /hand/confidence (float)   → 主控手置信度
+# 核心消息（UE 读这个就够了）:
+#   /hand/move  (float)  →  1.0=前进, -1.0=后退, 0.0=停止
+#
+# 调试消息（可选）:
+#   /hand/debug (string) →  "forward|fist|F|1" 格式的调试信息
 
 from pythonosc import udp_client, dispatcher, osc_server
-import threading
 
 
 class OSCSender:
@@ -20,25 +18,24 @@ class OSCSender:
         self.ip = ip
         self.port = port
 
-    def send(self, command="none", gesture="unknown", palm_facing=False,
-             num_hands=0, confidence=0.0):
+    def send(self, move_value=0.0, command="none", gesture="unknown",
+             palm_facing=False, num_hands=0):
         """发送 OSC 消息到 UE
 
         Args:
-            command: 游戏指令
-            gesture: 手势名称
-            palm_facing: 手心是否朝镜头
-            num_hands: 手的数量
-            confidence: 主控手置信度
+            move_value: 移动值 (1.0=前进, -1.0=后退, 0.0=停止)
+            command: 指令名称（调试用）
+            gesture: 手势名称（调试用）
+            palm_facing: 手掌朝向（调试用）
+            num_hands: 手的数量（调试用）
         """
-        self.client.send_message("/hand/command", command)
-        self.client.send_message("/hand/gesture", gesture)
-        self.client.send_message("/hand/palm", 1 if palm_facing else 0)
-        self.client.send_message("/hand/hands", num_hands)
-        self.client.send_message("/hand/confidence", confidence)
+        self.client.send_message("/hand/move", move_value)
+
+        facing = "F" if palm_facing else "B"
+        debug = f"{command}|{gesture}|{facing}|{num_hands}"
+        self.client.send_message("/hand/debug", debug)
 
     def close(self):
-        """兼容接口，OSC client 无需显式关闭"""
         pass
 
 
@@ -46,55 +43,35 @@ class OSCReceiver:
     """OSC 接收器 - 用于测试，模拟 UE 接收 OSC 消息"""
 
     COMMAND_LABELS = {
-        "forward": "前进 >>",
-        "backward": "<< 后退",
-        "stop": "|| 停止",
-        "none": "-- 待命",
+        1.0:  "前进 >>",
+        -1.0: "<< 后退",
+        0.0:  "|| 停止",
     }
 
     def __init__(self, ip, port):
         self.ip = ip
         self.port = port
-        self._last_command = None
         self._count = 0
+        self._last_value = None
 
         self._dispatcher = dispatcher.Dispatcher()
-        self._dispatcher.map("/hand/command", self._on_command)
-        self._dispatcher.map("/hand/gesture", self._on_gesture)
-        self._dispatcher.map("/hand/palm", self._on_palm)
-        self._dispatcher.map("/hand/hands", self._on_hands)
-        self._dispatcher.map("/hand/confidence", self._on_confidence)
+        self._dispatcher.map("/hand/move", self._on_move)
+        self._dispatcher.map("/hand/debug", self._on_debug)
 
-        self._current_gesture = "?"
-        self._current_palm = "?"
-        self._current_hands = 0
+        self._debug_info = ""
 
-    def _on_command(self, address, value):
-        cmd_label = self.COMMAND_LABELS.get(value, value)
+    def _on_move(self, address, value):
+        label = self.COMMAND_LABELS.get(value, f"? ({value})")
 
-        if value != self._last_command:
-            print(f"\n===== 指令切换: {cmd_label} =====")
-            self._last_command = value
+        if value != self._last_value:
+            print(f"\n===== 指令切换: {label} (move={value}) =====")
+            self._last_value = value
 
-        palm_tag = "正面" if self._current_palm == 1 else "背面"
-        print(
-            f"[{self._count}] {cmd_label}  "
-            f"手势:{self._current_gesture}({palm_tag})  "
-            f"手数:{self._current_hands}"
-        )
+        print(f"[{self._count}] move={value:+.1f}  {self._debug_info}")
         self._count += 1
 
-    def _on_gesture(self, address, value):
-        self._current_gesture = value
-
-    def _on_palm(self, address, value):
-        self._current_palm = value
-
-    def _on_hands(self, address, value):
-        self._current_hands = value
-
-    def _on_confidence(self, address, value):
-        pass
+    def _on_debug(self, address, value):
+        self._debug_info = value
 
     def listen(self):
         """开始监听 OSC 消息，按 Ctrl+C 退出"""
@@ -102,9 +79,9 @@ class OSCReceiver:
             (self.ip, self.port), self._dispatcher
         )
         print(f"OSC 监听 {self.ip}:{self.port}，按 Ctrl+C 退出...")
-        print(f"等待 /hand/command 消息...\n")
+        print(f"等待 /hand/move 消息...\n")
         try:
             server.serve_forever()
         except KeyboardInterrupt:
-            print(f"\n退出，共收到 {self._count} 条指令")
+            print(f"\n退出，共收到 {self._count} 帧")
             server.shutdown()

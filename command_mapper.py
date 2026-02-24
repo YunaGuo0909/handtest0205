@@ -26,6 +26,14 @@ class CommandMapper:
         ("open", True):   "stop",
     }
 
+    # 指令 → 移动值 (给 UE 的 AddMovementInput 直接用)
+    COMMAND_MOVE_VALUES = {
+        "forward":  1.0,
+        "backward": -1.0,
+        "stop":     0.0,
+        "none":     0.0,
+    }
+
     def __init__(self, stable_frames=None):
         self._window_size = stable_frames or COMMAND_STABLE_FRAMES
         self._history = deque(maxlen=self._window_size)

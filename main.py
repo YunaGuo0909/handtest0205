@@ -115,12 +115,13 @@ def main():
             raw_cmd = mapper.raw_command(primary_gesture, primary_palm_facing)
 
             # OSC 发送
+            move_value = CommandMapper.COMMAND_MOVE_VALUES.get(command, 0.0)
             sender.send(
+                move_value=move_value,
                 command=command,
                 gesture=primary_gesture,
                 palm_facing=primary_palm_facing,
                 num_hands=len(hands),
-                confidence=primary_confidence,
             )
 
             # 录制（保存为 JSON）

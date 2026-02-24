@@ -126,13 +126,14 @@ def main():
                     })
 
             command = mapper.update(primary_gesture, primary_palm_facing)
+            move_value = CommandMapper.COMMAND_MOVE_VALUES.get(command, 0.0)
 
             sender.send(
+                move_value=move_value,
                 command=command,
                 gesture=primary_gesture,
                 palm_facing=primary_palm_facing,
                 num_hands=len(hands),
-                confidence=primary_confidence,
             )
 
             fps_count += 1
