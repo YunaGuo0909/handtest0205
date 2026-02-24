@@ -1,5 +1,5 @@
 # 标准版 手部追踪 + 手势识别 + 游戏指令
-# 功能: 摄像头实时追踪 → 识别手势和朝向 → 映射游戏指令 → UDP发送到UE
+# 功能: 摄像头实时追踪 → 识别手势和朝向 → 映射游戏指令 → OSC发送到UE
 # 运行: python main.py
 
 import cv2
@@ -7,13 +7,13 @@ import json
 import time
 
 from config import (
-    UDP_IP, UDP_PORT, CAMERA_ID, CAMERA_WIDTH, CAMERA_HEIGHT,
+    OSC_IP, OSC_PORT, CAMERA_ID, CAMERA_WIDTH, CAMERA_HEIGHT,
     SAVE_TO_FILE, OUTPUT_FILE, PRIMARY_HAND,
 )
 from hand_tracker import HandTracker
 from gesture_recognizer import GestureRecognizer
 from command_mapper import CommandMapper
-from udp_utils import UDPSender
+from osc_utils import OSCSender
 
 COMMAND_DISPLAY = {
     "forward": ">> FORWARD",
@@ -32,7 +32,7 @@ COMMAND_COLORS = {
 
 def main():
     tracker = HandTracker()
-    sender = UDPSender(UDP_IP, UDP_PORT)
+    sender = OSCSender(OSC_IP, OSC_PORT)
     mapper = CommandMapper()
 
     cap = cv2.VideoCapture(CAMERA_ID)
@@ -43,8 +43,9 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
 
-    print(f"已启动 | UDP: {UDP_IP}:{UDP_PORT} | 主控手: {PRIMARY_HAND} | 按Q退出")
+    print(f"已启动 | OSC: {OSC_IP}:{OSC_PORT} | 主控手: {PRIMARY_HAND} | 按Q退出")
     print(f"指令映射: 握拳正面→前进  握拳背面→后退  张开正面→停止")
+    print(f"OSC 地址: /hand/command, /hand/gesture, /hand/palm, /hand/hands")
     if SAVE_TO_FILE:
         print(f"数据将保存到: {OUTPUT_FILE}")
 
@@ -67,6 +68,7 @@ def main():
             hands = []
             primary_gesture = "unknown"
             primary_palm_facing = False
+            primary_confidence = 0.0
 
             if results.hand_landmarks:
                 for idx, (lms, handed) in enumerate(
@@ -96,6 +98,7 @@ def main():
                     if hand_type == PRIMARY_HAND:
                         primary_gesture = gesture
                         primary_palm_facing = palm_facing
+                        primary_confidence = conf
 
                     hands.append({
                         "hand_index": idx,
@@ -111,11 +114,23 @@ def main():
             command = mapper.update(primary_gesture, primary_palm_facing)
             raw_cmd = mapper.raw_command(primary_gesture, primary_palm_facing)
 
-            # UDP 发送
-            data = sender.send(hands, command)
+            # OSC 发送
+            sender.send(
+                command=command,
+                gesture=primary_gesture,
+                palm_facing=primary_palm_facing,
+                num_hands=len(hands),
+                confidence=primary_confidence,
+            )
 
+            # 录制（保存为 JSON）
             if SAVE_TO_FILE:
-                recorded_frames.append(data)
+                recorded_frames.append({
+                    "timestamp": time.time(),
+                    "command": command,
+                    "num_hands": len(hands),
+                    "hands": hands,
+                })
 
             # FPS
             fps_count += 1
@@ -126,13 +141,11 @@ def main():
 
             # --- 画面信息 ---
 
-            # 顶部状态栏
             info = f"FPS:{fps} Hands:{len(hands)}"
             if SAVE_TO_FILE:
                 info += f" REC:{len(recorded_frames)}"
             cv2.putText(frame, info, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-            # 指令显示（大字居中）
             cmd_text = COMMAND_DISPLAY.get(command, "")
             cmd_color = COMMAND_COLORS.get(command, (128, 128, 128))
             if cmd_text:
@@ -140,7 +153,6 @@ def main():
                 text_x = (w - text_size[0]) // 2
                 cv2.putText(frame, cmd_text, (text_x, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1.2, cmd_color, 3)
 
-            # 原始指令（防抖前）小字显示
             if raw_cmd != "none":
                 cv2.putText(frame, f"raw: {raw_cmd}", (10, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
 

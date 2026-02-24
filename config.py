@@ -1,8 +1,9 @@
 # 全局配置
 
-# ========== UDP 设置 ==========
-UDP_IP = "127.0.0.1"
-UDP_PORT = 5000
+# ========== OSC 设置 ==========
+OSC_IP = "127.0.0.1"
+OSC_PORT = 7000               # UE 的 OSC Server 监听端口
+OSC_LISTEN_PORT = 7001        # Python 接收测试端口
 
 # ========== 摄像头 ==========
 CAMERA_ID = 0

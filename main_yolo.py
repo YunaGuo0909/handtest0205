@@ -1,18 +1,18 @@
 # YOLO GPU加速版 手部追踪 + 手势识别 + 游戏指令
-# 功能: YOLO人体检测 + MediaPipe手部追踪 + 手势识别 + 指令映射 + UDP
+# 功能: YOLO人体检测 + MediaPipe手部追踪 + 手势识别 + 指令映射 + OSC
 # 运行: python main_yolo.py
 
 import cv2
 import time
 
 from config import (
-    UDP_IP, UDP_PORT, CAMERA_ID, CAMERA_WIDTH, CAMERA_HEIGHT,
+    OSC_IP, OSC_PORT, CAMERA_ID, CAMERA_WIDTH, CAMERA_HEIGHT,
     USE_GPU, PRIMARY_HAND,
 )
 from hand_tracker import HandTracker
 from gesture_recognizer import GestureRecognizer
 from command_mapper import CommandMapper
-from udp_utils import UDPSender
+from osc_utils import OSCSender
 
 COMMAND_DISPLAY = {
     "forward": ">> FORWARD",
@@ -44,7 +44,7 @@ def main():
     print(f"YOLO 已加载到 {device}")
 
     tracker = HandTracker()
-    sender = UDPSender(UDP_IP, UDP_PORT)
+    sender = OSCSender(OSC_IP, OSC_PORT)
     mapper = CommandMapper()
 
     cap = cv2.VideoCapture(CAMERA_ID)
@@ -55,7 +55,7 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
 
-    print(f"已启动(GPU) | UDP: {UDP_IP}:{UDP_PORT} | 主控手: {PRIMARY_HAND} | 按Q退出")
+    print(f"已启动(GPU) | OSC: {OSC_IP}:{OSC_PORT} | 主控手: {PRIMARY_HAND} | 按Q退出")
     print(f"指令映射: 握拳正面→前进  握拳背面→后退  张开正面→停止")
 
     fps_count = 0
@@ -71,7 +71,6 @@ def main():
             frame = cv2.flip(frame, 1)
             h, w = frame.shape[:2]
 
-            # YOLO 检测人体
             yolo_results = yolo(frame, verbose=False, classes=[0])
             for r in yolo_results:
                 for box in r.boxes:
@@ -79,12 +78,12 @@ def main():
                         x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().numpy())
                         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 1)
 
-            # MediaPipe 检测手部
             results = tracker.detect(frame)
 
             hands = []
             primary_gesture = "unknown"
             primary_palm_facing = False
+            primary_confidence = 0.0
 
             if results.hand_landmarks:
                 for idx, (lms, handed) in enumerate(
@@ -114,6 +113,7 @@ def main():
                     if hand_type == PRIMARY_HAND:
                         primary_gesture = gesture
                         primary_palm_facing = palm_facing
+                        primary_confidence = conf
 
                     hands.append({
                         "hand_index": idx,
@@ -126,16 +126,21 @@ def main():
                     })
 
             command = mapper.update(primary_gesture, primary_palm_facing)
-            sender.send(hands, command)
 
-            # FPS
+            sender.send(
+                command=command,
+                gesture=primary_gesture,
+                palm_facing=primary_palm_facing,
+                num_hands=len(hands),
+                confidence=primary_confidence,
+            )
+
             fps_count += 1
             if time.time() - fps_time >= 1:
                 fps = fps_count
                 fps_count = 0
                 fps_time = time.time()
 
-            # 顶部状态栏
             cv2.putText(
                 frame,
                 f"FPS:{fps} Hands:{len(hands)} [GPU]",
@@ -146,7 +151,6 @@ def main():
                 2,
             )
 
-            # 指令显示
             cmd_text = COMMAND_DISPLAY.get(command, "")
             cmd_color = COMMAND_COLORS.get(command, (128, 128, 128))
             if cmd_text:
