@@ -9,10 +9,10 @@ from config import COMMAND_STABLE_FRAMES
 class CommandMapper:
     """手势 → 游戏指令映射器（含防抖）
 
-    指令映射规则:
-        握拳 + 正面(手心朝镜头) → forward  (前进)
-        握拳 + 背面(手背朝镜头) → backward (后退)
-        张开 + 正面(手心朝镜头) → stop     (停止)
+    指令映射规则 (2.5D横版):
+        握拳 + 正面(手心朝镜头) → right (右移)
+        握拳 + 背面(手背朝镜头) → left  (左移)
+        张开 + 正面(手心朝镜头) → stop  (停止)
 
     防抖机制:
         维护一个滑动窗口，连续 N 帧识别结果相同时才切换指令，
@@ -21,17 +21,18 @@ class CommandMapper:
 
     # (手势, 是否正面) → 指令
     GESTURE_COMMAND_MAP = {
-        ("fist", True):   "forward",
-        ("fist", False):  "backward",
+        ("fist", True):   "right",
+        ("fist", False):  "left",
         ("open", True):   "stop",
     }
 
     # 指令 → 移动值 (给 UE 的 AddMovementInput 直接用)
+    # 正值=右移, 负值=左移, UE 侧 World Direction 设为 (1,0,0)
     COMMAND_MOVE_VALUES = {
-        "forward":  1.0,
-        "backward": -1.0,
-        "stop":     0.0,
-        "none":     0.0,
+        "right":  1.0,
+        "left":  -1.0,
+        "stop":   0.0,
+        "none":   0.0,
     }
 
     def __init__(self, stable_frames=None):
@@ -51,7 +52,7 @@ class CommandMapper:
             palm_facing: 手心是否朝镜头
 
         Returns:
-            str: 稳定指令 ("forward" / "backward" / "stop" / "none")
+            str: 稳定指令 ("right" / "left" / "stop" / "none")
         """
         raw = self.raw_command(gesture, palm_facing)
         self._history.append(raw)

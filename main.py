@@ -12,15 +12,15 @@ from command_mapper import CommandMapper
 from osc_utils import OSCSender
 
 COMMAND_DISPLAY = {
-    "forward": ">> FORWARD",
-    "backward": "<< BACKWARD",
+    "right": ">> RIGHT",
+    "left": "<< LEFT",
     "stop": "|| STOP",
     "none": "",
 }
 
 COMMAND_COLORS = {
-    "forward": (0, 255, 0),
-    "backward": (0, 0, 255),
+    "right": (0, 255, 0),
+    "left": (0, 0, 255),
     "stop": (0, 255, 255),
     "none": (128, 128, 128),
 }
@@ -40,7 +40,7 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
 
     print(f"已启动 | OSC: {OSC_IP}:{OSC_PORT} | 主控手: {PRIMARY_HAND} | 按Q退出")
-    print(f"指令映射: 握拳正面→前进  握拳背面→后退  张开正面→停止")
+    print(f"指令映射: 握拳正面→右移  握拳背面→左移  张开正面→停止")
     print(f"OSC 发送: /hand/move (float: 1.0=前进, -1.0=后退, 0.0=停止)")
 
     fps_count = 0
