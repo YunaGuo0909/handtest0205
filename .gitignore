@@ -13,6 +13,10 @@ yolov8n.pt
 hand_data.json
 *.json
 !pyproject.toml
+gesture_data.csv
+
+# 训练视频（太大，不入库）
+training_videos/
 
 # IDE
 .vscode/

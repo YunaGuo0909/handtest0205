@@ -1,79 +1,234 @@
 # 指令映射模块
-# 将手势 + 手掌朝向映射为 UE 游戏指令，并提供防抖机制
+# 左手连续移动 / 右手瞬发技能 / 双手组合技 → 键盘按键
 
+import time
 from collections import deque, Counter
 
-from config import COMMAND_STABLE_FRAMES
+from config import (
+    MOVE_STABLE_FRAMES, ACTION_COOLDOWN, COMBO_COOLDOWN,
+    SWIPE_UP_THRESHOLD, SWIPE_HISTORY_FRAMES, HANDS_TOUCH_THRESHOLD,
+    POINTING_X_THRESHOLD,
+)
 
 
 class CommandMapper:
-    """手势 → 游戏指令映射器（含防抖）
+    """手势 → 键盘指令映射器
 
-    指令映射规则 (2.5D横版):
-        握拳 + 正面(手心朝镜头) → right (右移)
-        握拳 + 背面(手背朝镜头) → left  (左移)
-        张开 + 正面(手心朝镜头) → stop  (停止)
-
-    防抖机制:
-        维护一个滑动窗口，连续 N 帧识别结果相同时才切换指令，
-        避免单帧误识别导致角色动作抖动。
+    左手(连续): 食指指右→D, 食指指左→A, 其他→停止
+    右手(瞬发): 手背向上挥→W(跳), 指向→Shift(加速)
+    双手(瞬发): 双拳展开→E, 手腕碰撞→Q
     """
 
-    # (手势, 是否正面) → 指令
-    GESTURE_COMMAND_MAP = {
-        ("fist", True):   "right",
-        ("fist", False):  "left",
-        ("open", True):   "stop",
+    # ===== 右手 · 瞬发键位 =====
+    RIGHT_HAND_ACTION = {
+        "swipe_up":  "w",           # 手背快速向上 → W (跳跃)
+        "pointing":  "shift",       # 指向 → Shift (加速)
     }
 
-    # 指令 → 移动值 (给 UE 的 AddMovementInput 直接用)
-    # 正值=右移, 负值=左移, UE 侧 World Direction 设为 (1,0,0)
-    COMMAND_MOVE_VALUES = {
-        "right":  1.0,
-        "left":  -1.0,
-        "stop":   0.0,
-        "none":   0.0,
+    # ===== 双手 · 组合键位 =====
+    COMBO_ACTION = {
+        "fist_to_open": "e",        # 双拳展开为手掌 → E
+        "wrist_clash":  "q",        # 手腕碰撞 → Q
     }
 
-    def __init__(self, stable_frames=None):
-        self._window_size = stable_frames or COMMAND_STABLE_FRAMES
-        self._history = deque(maxlen=self._window_size)
-        self._current_command = "none"
+    # 双拳展开的过渡容忍帧数
+    _FIST_TO_OPEN_WINDOW = 8
 
-    def raw_command(self, gesture, palm_facing):
-        """直接查表，不经过防抖（用于调试显示）"""
-        return self.GESTURE_COMMAND_MAP.get((gesture, palm_facing), "none")
+    def __init__(self):
+        # 移动防抖
+        self._move_history = deque(maxlen=MOVE_STABLE_FRAMES)
+        self._current_move_key = None
 
-    def update(self, gesture, palm_facing):
-        """输入当前帧的手势和朝向，返回防抖后的稳定指令
+        # 瞬发冷却
+        self._last_action_time = 0
+        self._last_combo_time = 0
+
+        # 边缘检测
+        self._prev_right_gesture = "unknown"
+        self._both_fist_counter = 0
+
+        # 右手挥动检测
+        self._right_wrist_history = deque(maxlen=SWIPE_HISTORY_FRAMES)
+
+        # 显示用
+        self.last_move_cmd = "stop"
+        self.last_action = ""
+        self.last_combo = ""
+
+    # --------------------------------------------------
+    # 主入口
+    # --------------------------------------------------
+    def update(self, left_data, right_data, keyboard):
+        """每帧调用，处理所有手势 → 键盘逻辑
 
         Args:
-            gesture: 手势名称
-            palm_facing: 手心是否朝镜头
+            left_data:  (gesture, palm_facing, landmarks) or None
+            right_data: (gesture, palm_facing, landmarks) or None
+            keyboard:   KeyboardController
 
         Returns:
-            str: 稳定指令 ("right" / "left" / "stop" / "none")
+            list[str]: 本帧触发的动作描述（用于日志/显示）
         """
-        raw = self.raw_command(gesture, palm_facing)
-        self._history.append(raw)
+        triggered = []
+        now = time.time()
 
-        if len(self._history) < self._window_size:
-            return self._current_command
+        # --- 1. 双手组合（最高优先级）---
+        combo = self._check_combo(left_data, right_data, now)
+        if combo:
+            keyboard.tap_key(self.COMBO_ACTION[combo])
+            self.last_combo = combo
+            triggered.append(f"COMBO {combo} → {self.COMBO_ACTION[combo].upper()}")
 
-        counts = Counter(self._history)
-        most_common, count = counts.most_common(1)[0]
+        # --- 2. 左手移动（连续）---
+        new_key = self._update_movement(left_data)
+        if new_key != self._current_move_key:
+            if self._current_move_key:
+                keyboard.release_key(self._current_move_key)
+            if new_key:
+                keyboard.hold_key(new_key)
+            self._current_move_key = new_key
 
-        if count >= self._window_size:
-            self._current_command = most_common
+        # --- 3. 右手技能（瞬发）---
+        action = self._check_action(right_data, now)
+        if action:
+            keyboard.tap_key(self.RIGHT_HAND_ACTION[action])
+            self.last_action = action
+            triggered.append(f"ACTION {action} → {self.RIGHT_HAND_ACTION[action].upper()}")
 
-        return self._current_command
+        # --- 更新上一帧状态 ---
+        self._update_prev_state(left_data, right_data)
+
+        return triggered
+
+    # --------------------------------------------------
+    # 左手 · 连续移动（食指方向）
+    # --------------------------------------------------
+    @staticmethod
+    def _get_pointing_direction(landmarks):
+        """根据食指方向返回移动键: 指右→'d', 指左→'a', 方向不明→None"""
+        index_mcp = landmarks[5]
+        index_tip = landmarks[8]
+        dx = index_tip.x - index_mcp.x
+        if abs(dx) < POINTING_X_THRESHOLD:
+            return None
+        return "d" if dx > 0 else "a"
+
+    def _update_movement(self, left_data):
+        """防抖后返回应按住的键 (str) 或 None"""
+        if left_data is None:
+            raw_key = None
+        else:
+            gesture, _, landmarks = left_data
+            if gesture == "pointing":
+                raw_key = self._get_pointing_direction(landmarks)
+            else:
+                raw_key = None
+
+        self._move_history.append(raw_key)
+
+        if len(self._move_history) < self._move_history.maxlen:
+            return self._current_move_key
+
+        counts = Counter(self._move_history)
+        most, count = counts.most_common(1)[0]
+
+        if count >= self._move_history.maxlen:
+            self.last_move_cmd = most or "stop"
+            return most
+
+        return self._current_move_key
+
+    # --------------------------------------------------
+    # 右手 · 瞬发技能
+    # --------------------------------------------------
+    def _check_action(self, right_data, now):
+        if right_data is None:
+            self._right_wrist_history.clear()
+            return None
+
+        if now - self._last_action_time < ACTION_COOLDOWN:
+            return None
+
+        gesture, palm_facing, landmarks = right_data
+
+        # 手背快速向上挥动 (y 减小 = 向上)
+        wrist_y = landmarks[0].y
+        self._right_wrist_history.append(wrist_y)
+
+        if len(self._right_wrist_history) >= 2:
+            delta = self._right_wrist_history[0] - self._right_wrist_history[-1]
+            if delta > SWIPE_UP_THRESHOLD:
+                self._last_action_time = now
+                self._right_wrist_history.clear()
+                return "swipe_up"
+
+        # 指向 → 边缘触发（从非 pointing 变为 pointing）
+        if gesture == "pointing" and self._prev_right_gesture != "pointing":
+            self._last_action_time = now
+            return "pointing"
+
+        return None
+
+    # --------------------------------------------------
+    # 双手 · 组合技
+    # --------------------------------------------------
+    def _check_combo(self, left_data, right_data, now):
+        if left_data is None or right_data is None:
+            return None
+
+        if now - self._last_combo_time < COMBO_COOLDOWN:
+            return None
+
+        l_gesture, _, l_lms = left_data
+        r_gesture, _, r_lms = right_data
+
+        # 双拳展开为手掌 (E): 最近 N 帧内有双拳 → 当前双掌
+        if (self._both_fist_counter > 0
+                and l_gesture == "open" and r_gesture == "open"):
+            self._last_combo_time = now
+            self._both_fist_counter = 0
+            return "fist_to_open"
+
+        # 手腕碰撞 (Q): 双手腕距离 < 阈值
+        dist = ((l_lms[0].x - r_lms[0].x) ** 2
+                + (l_lms[0].y - r_lms[0].y) ** 2) ** 0.5
+        if dist < HANDS_TOUCH_THRESHOLD:
+            self._last_combo_time = now
+            return "wrist_clash"
+
+        return None
+
+    # --------------------------------------------------
+    # 状态更新
+    # --------------------------------------------------
+    def _update_prev_state(self, left_data, right_data):
+        self._prev_right_gesture = right_data[0] if right_data else "unknown"
+
+        both_fist = (left_data is not None and right_data is not None
+                     and left_data[0] == "fist" and right_data[0] == "fist")
+        if both_fist:
+            self._both_fist_counter = self._FIST_TO_OPEN_WINDOW
+        elif self._both_fist_counter > 0:
+            self._both_fist_counter -= 1
+
+    # --------------------------------------------------
+    # 控制
+    # --------------------------------------------------
+    def stop(self, keyboard):
+        """立即停止所有移动"""
+        if self._current_move_key:
+            keyboard.release_key(self._current_move_key)
+            self._current_move_key = None
+        self._move_history.clear()
+        self.last_move_cmd = "stop"
 
     def reset(self):
-        """重置状态"""
-        self._history.clear()
-        self._current_command = "none"
-
-    @property
-    def command(self):
-        """当前稳定指令"""
-        return self._current_command
+        """重置所有状态"""
+        self._move_history.clear()
+        self._current_move_key = None
+        self._prev_right_gesture = "unknown"
+        self._both_fist_counter = 0
+        self._right_wrist_history.clear()
+        self.last_move_cmd = "stop"
+        self.last_action = ""
+        self.last_combo = ""

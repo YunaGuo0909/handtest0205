@@ -1,34 +1,23 @@
-# 手部追踪 + 手势识别 + 游戏指令
-# 摄像头实时追踪 → 识别手势和朝向 → 映射游戏指令 → OSC 发送到 UE
+# 手势键盘控制
+# 摄像头实时追踪双手 → 识别手势 → 模拟键盘按键控制游戏角色
 # 运行: python main.py
 
 import cv2
 import time
 
-from config import OSC_IP, OSC_PORT, CAMERA_ID, CAMERA_WIDTH, CAMERA_HEIGHT, PRIMARY_HAND
+from config import CAMERA_ID, CAMERA_WIDTH, CAMERA_HEIGHT, MOVE_HAND, ACTION_HAND
 from hand_tracker import HandTracker
 from gesture_recognizer import GestureRecognizer
 from command_mapper import CommandMapper
-from osc_utils import OSCSender
+from keyboard_controller import KeyboardController
 
-COMMAND_DISPLAY = {
-    "right": ">> RIGHT",
-    "left": "<< LEFT",
-    "stop": "|| STOP",
-    "none": "",
-}
-
-COMMAND_COLORS = {
-    "right": (0, 255, 0),
-    "left": (0, 0, 255),
-    "stop": (0, 255, 255),
-    "none": (128, 128, 128),
-}
+MOVE_DISPLAY = {"d": ">> D", "a": "<< A", None: "STOP"}
+MOVE_COLORS = {"d": (0, 255, 0), "a": (0, 0, 255), None: (128, 128, 128)}
 
 
 def main():
     tracker = HandTracker()
-    sender = OSCSender(OSC_IP, OSC_PORT)
+    keyboard = KeyboardController()
     mapper = CommandMapper()
 
     cap = cv2.VideoCapture(CAMERA_ID)
@@ -39,9 +28,12 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
 
-    print(f"已启动 | OSC: {OSC_IP}:{OSC_PORT} | 主控手: {PRIMARY_HAND} | 按Q退出")
-    print(f"指令映射: 握拳正面→右移  握拳背面→左移  张开正面→停止")
-    print(f"OSC 发送: /hand/move (float: 1.0=前进, -1.0=后退, 0.0=停止)")
+    print("=" * 50)
+    print("手势键盘控制 已启动 | 按 Q 退出")
+    print(f"左手({MOVE_HAND}): 食指指右→D  食指指左→A  无→停止")
+    print(f"右手({ACTION_HAND}): 向上挥→W(跳)  指向→Shift(加速)")
+    print(f"双手: 双拳展开→E  手腕碰撞→Q")
+    print("=" * 50)
 
     fps_count = 0
     fps_time = time.time()
@@ -58,44 +50,40 @@ def main():
 
             results = tracker.detect(frame)
 
-            primary_gesture = "unknown"
-            primary_palm_facing = False
+            left_data = None
+            right_data = None
 
             if results.hand_landmarks:
-                for idx, (lms, handed) in enumerate(
-                    zip(results.hand_landmarks, results.handedness)
-                ):
+                for lms, handed in zip(results.hand_landmarks, results.handedness):
                     hand_type = handed[0].category_name
-
-                    gesture, gesture_conf, palm_facing = GestureRecognizer.recognize(
+                    gesture, conf, palm_facing = GestureRecognizer.recognize(
                         lms, hand_type
                     )
 
                     tracker.draw_hand(frame, lms, w, h)
 
-                    facing_tag = "F" if palm_facing else "B"
+                    tag = "F" if palm_facing else "B"
                     wrist = lms[0]
                     cv2.putText(
                         frame,
-                        f"{hand_type}: {gesture} [{facing_tag}]",
+                        f"{hand_type}: {gesture} [{tag}]",
                         (int(wrist.x * w) - 50, int(wrist.y * h) + 30),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
-                        (0, 255, 255),
-                        2,
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2,
                     )
 
-                    if hand_type == PRIMARY_HAND:
-                        primary_gesture = gesture
-                        primary_palm_facing = palm_facing
+                    data = (gesture, palm_facing, lms)
+                    if hand_type == MOVE_HAND:
+                        left_data = data
+                    elif hand_type == ACTION_HAND:
+                        right_data = data
 
-            # 指令映射（防抖）
-            command = mapper.update(primary_gesture, primary_palm_facing)
-            raw_cmd = mapper.raw_command(primary_gesture, primary_palm_facing)
+            triggered = mapper.update(left_data, right_data, keyboard)
 
-            # OSC 发送
-            move_value = CommandMapper.COMMAND_MOVE_VALUES.get(command, 0.0)
-            sender.send(move_value=move_value)
+            if not results.hand_landmarks:
+                mapper.stop(keyboard)
+
+            for t in triggered:
+                print(f"  >> {t}")
 
             # FPS
             fps_count += 1
@@ -104,32 +92,34 @@ def main():
                 fps_count = 0
                 fps_time = time.time()
 
-            # --- 画面信息 ---
-
+            # --- HUD ---
             num_hands = len(results.hand_landmarks) if results.hand_landmarks else 0
             cv2.putText(frame, f"FPS:{fps} Hands:{num_hands}", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-            cmd_text = COMMAND_DISPLAY.get(command, "")
-            cmd_color = COMMAND_COLORS.get(command, (128, 128, 128))
-            if cmd_text:
-                text_size = cv2.getTextSize(cmd_text, cv2.FONT_HERSHEY_SIMPLEX, 1.2, 3)[0]
-                text_x = (w - text_size[0]) // 2
-                cv2.putText(frame, cmd_text, (text_x, h - 30),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1.2, cmd_color, 3)
+            mk = mapper._current_move_key
+            mv_text = MOVE_DISPLAY.get(mk, "STOP")
+            mv_color = MOVE_COLORS.get(mk, (128, 128, 128))
+            cv2.putText(frame, f"Move: {mv_text}", (10, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, mv_color, 2)
 
-            if raw_cmd != "none":
-                cv2.putText(frame, f"raw: {raw_cmd}", (10, h - 15),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
+            if mapper.last_action:
+                cv2.putText(frame, f"Skill: {mapper.last_action}", (10, 90),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
 
-            cv2.imshow("Hand Tracking - Q to quit", frame)
+            if mapper.last_combo:
+                cv2.putText(frame, f"Combo: {mapper.last_combo}", (10, 120),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2)
+
+            cv2.imshow("Hand Gesture Keyboard - Q to quit", frame)
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
 
     finally:
+        mapper.stop(keyboard)
+        keyboard.close()
         cap.release()
         cv2.destroyAllWindows()
-        sender.close()
         print("已停止")
 
 

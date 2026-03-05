@@ -1,12 +1,13 @@
 [project]
 name = "handtest0205"
-version = "0.2.0"
-description = "实时手部追踪与手势识别 - MediaPipe + UDP传输到UE"
+version = "0.3.0"
+description = "实时手势识别 → 键盘模拟控制游戏角色 (MediaPipe + pynput)"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "mediapipe>=0.10.0",
     "opencv-python>=4.8.0",
     "numpy>=1.24.0",
+    "pynput>=1.8.0",
     "python-osc>=1.8.0",
 ]
