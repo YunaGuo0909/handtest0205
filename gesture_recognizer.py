@@ -44,7 +44,7 @@ class GestureRecognizer:
 
     @classmethod
     def _is_finger_extended(cls, landmarks, finger):
-        """判断手指是否伸直"""
+        """判断手指是否伸直（支持任意手部朝向）"""
         tip = landmarks[cls.FINGER_TIPS[finger]]
         pip_joint = landmarks[cls.FINGER_PIPS[finger]]
         mcp = landmarks[cls.FINGER_MCPS[finger]]
@@ -52,8 +52,35 @@ class GestureRecognizer:
 
         if finger == "thumb":
             return abs(tip.x - wrist.x) > abs(mcp.x - wrist.x)
-        else:
-            return tip.y < pip_joint.y < mcp.y
+
+        # 方法1：经典 y 轴检测（手指朝上时有效）
+        if tip.y < pip_joint.y < mcp.y:
+            return True
+
+        # 方法2：距离检测（任意朝向均有效）
+        # 伸直时指尖到 MCP 距离 >> PIP 到 MCP 距离
+        # 弯曲时指尖靠近 MCP，距离 ≤ PIP 到 MCP
+        tip_mcp = math.sqrt((tip.x - mcp.x)**2 + (tip.y - mcp.y)**2)
+        pip_mcp = math.sqrt((pip_joint.x - mcp.x)**2 + (pip_joint.y - mcp.y)**2)
+        return tip_mcp > pip_mcp * 1.4
+
+    @classmethod
+    def _get_pointing_direction(cls, landmarks):
+        """根据食指角度判断指向: 'right'/'left'/'up'/'down' 或 None"""
+        index_mcp = landmarks[5]
+        index_tip = landmarks[8]
+        dx = index_tip.x - index_mcp.x
+        dy = index_tip.y - index_mcp.y
+        angle = math.degrees(math.atan2(dy, dx))
+        if -45 < angle < 45:
+            return "right"
+        elif angle > 135 or angle < -135:
+            return "left"
+        elif -135 <= angle <= -45:
+            return "up"
+        elif 45 <= angle <= 135:
+            return "down"
+        return None
 
     @classmethod
     def _is_palm_facing_camera(cls, landmarks, hand_type):
@@ -137,7 +164,9 @@ class GestureRecognizer:
                 return "four", confidence, palm_facing
 
         if not thumb and index and not middle and not ring and not pinky:
-            return "pointing", confidence, palm_facing
+            direction = cls._get_pointing_direction(landmarks)
+            gesture_name = f"point_{direction}" if direction else "pointing"
+            return gesture_name, confidence, palm_facing
 
         if not thumb and index and not middle and not ring and pinky:
             return "rock", confidence, palm_facing

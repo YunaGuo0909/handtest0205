@@ -1,6 +1,7 @@
 # 指令映射模块
 # 左手连续移动 / 右手瞬发技能 / 双手组合技 → 键盘按键
 
+import math
 import time
 from collections import deque, Counter
 
@@ -105,13 +106,23 @@ class CommandMapper:
     # --------------------------------------------------
     @staticmethod
     def _get_pointing_direction(landmarks):
-        """根据食指方向返回移动键: 指右→'d', 指左→'a', 方向不明→None"""
+        """根据食指 tip→mcp 向量角度判断指向: 指右→'d', 指左→'a', 非水平→None
+
+        用 atan2 计算角度（度数）:
+          0° = 右, ±180° = 左, -90° = 上, 90° = 下
+        只有水平方向（±45° 以内）才触发移动
+        """
         index_mcp = landmarks[5]
         index_tip = landmarks[8]
         dx = index_tip.x - index_mcp.x
-        if abs(dx) < POINTING_X_THRESHOLD:
-            return None
-        return "d" if dx > 0 else "a"
+        dy = index_tip.y - index_mcp.y
+        angle = math.degrees(math.atan2(dy, dx))
+
+        if -45 < angle < 45:
+            return "d"
+        elif angle > 135 or angle < -135:
+            return "a"
+        return None
 
     def _update_movement(self, left_data):
         """防抖后返回应按住的键 (str) 或 None"""
@@ -119,7 +130,11 @@ class CommandMapper:
             raw_key = None
         else:
             gesture, _, landmarks = left_data
-            if gesture == "pointing":
+            if gesture == "point_right":
+                raw_key = "d"
+            elif gesture == "point_left":
+                raw_key = "a"
+            elif gesture == "pointing":
                 raw_key = self._get_pointing_direction(landmarks)
             else:
                 raw_key = None
@@ -163,7 +178,9 @@ class CommandMapper:
                 return "swipe_up"
 
         # 指向 → 边缘触发（从非 pointing 变为 pointing）
-        if gesture == "pointing" and self._prev_right_gesture != "pointing":
+        is_pointing = gesture in ("pointing", "point_right", "point_left", "point_up", "point_down")
+        was_pointing = self._prev_right_gesture in ("pointing", "point_right", "point_left", "point_up", "point_down")
+        if is_pointing and not was_pointing:
             self._last_action_time = now
             return "pointing"
 
