@@ -33,7 +33,8 @@ DEFAULTS = {
     "model_out": "gesture_model.pt",
 }
 
-INPUT_DIM = 126  # 左手63 + 右手63
+POSITION_DIM = 126  # 左手63 + 右手63
+INPUT_DIM = POSITION_DIM * 2  # 位置(126) + 速度(126) = 252
 
 
 # ========== 数据集 ==========
@@ -113,44 +114,66 @@ def normalize_coords(frames):
     return frames
 
 
-def build_windows(sequences, window_size, stride, augment=True):
+def add_velocity_features(frames):
+    """在位置特征后追加帧间速度（一阶差分）。
+
+    帮助区分"整手平移"和"关节弯曲"：
+    - 整手平移：所有关键点速度大且方向一致
+    - 关节弯曲：手腕速度小，指尖速度有角度差异
+
+    Input:  (window_size, 126) 归一化位置
+    Output: (window_size, 252) 位置 + 速度
+    """
+    frames = np.array(frames, dtype=np.float32)
+    velocity = np.zeros_like(frames)
+    velocity[1:] = frames[1:] - frames[:-1]
+    return np.concatenate([frames, velocity], axis=1)
+
+
+def build_windows(sequences, window_size, stride, label_map, augment=True):
     """从按视频分组的序列中构建滑动窗口样本"""
     windows = []
     labels = []
-    label_set = sorted(set(label for _, label in sequences.keys()))
-    label_to_idx = {name: i for i, name in enumerate(label_set)}
 
-    print(f"\n标签映射: {label_to_idx}")
+    print(f"\n标签映射: {label_map}")
 
     for (source, label), frames in sequences.items():
         if len(frames) < window_size:
             continue
 
-        label_idx = label_to_idx[label]
+        label_idx = label_map[label]
 
         for start in range(0, len(frames) - window_size + 1, stride):
             window = frames[start:start + window_size]
             normed = normalize_coords(window)
-            windows.append(normed)
+            windows.append(add_velocity_features(normed))
             labels.append(label_idx)
 
             if augment:
-                # 数据增强1：加随机噪声
                 noisy = normed + np.random.normal(0, 0.005, normed.shape).astype(np.float32)
-                windows.append(noisy)
+                windows.append(add_velocity_features(noisy))
                 labels.append(label_idx)
 
-                # 数据增强2：随机缩放
                 scale = np.random.uniform(0.9, 1.1)
                 scaled = normed * scale
-                windows.append(scaled)
+                windows.append(add_velocity_features(scaled))
                 labels.append(label_idx)
 
-    return np.array(windows), np.array(labels), label_to_idx
+    return np.array(windows), np.array(labels)
+
+
+def build_label_map(sequences):
+    """从所有数据中构建统一的标签映射"""
+    label_set = sorted(set(label for _, label in sequences.keys()))
+    return {name: i for i, name in enumerate(label_set)}
 
 
 def split_by_source(sequences, test_ratio):
-    """按视频源分割训练/测试集，确保同一视频的数据不会同时出现在两个集合"""
+    """按视频源分割训练/测试集
+
+    对于只有 1 个来源的类别（如摄像头录制的 idle），
+    按帧数比例拆分而非按来源拆分。
+    """
     sources_by_label = defaultdict(list)
     for (source, label) in sequences.keys():
         sources_by_label[label].append(source)
@@ -161,16 +184,28 @@ def split_by_source(sequences, test_ratio):
     for label, sources in sources_by_label.items():
         sources = list(set(sources))
         random.shuffle(sources)
-        n_test = max(1, int(len(sources) * test_ratio))
-        test_sources = set(sources[:n_test])
 
-        for (src, lbl), frames in sequences.items():
-            if lbl != label:
-                continue
-            if src in test_sources:
-                test_seqs[(src, lbl)] = frames
-            else:
-                train_seqs[(src, lbl)] = frames
+        if len(sources) <= 1:
+            # 只有 1 个来源：按帧比例拆分（前 80% 训练，后 20% 测试）
+            for (src, lbl), frames in sequences.items():
+                if lbl != label:
+                    continue
+                split_idx = int(len(frames) * (1 - test_ratio))
+                if split_idx > 0:
+                    train_seqs[(src + "_train", lbl)] = frames[:split_idx]
+                if split_idx < len(frames):
+                    test_seqs[(src + "_test", lbl)] = frames[split_idx:]
+        else:
+            n_test = max(1, int(len(sources) * test_ratio))
+            test_sources = set(sources[:n_test])
+
+            for (src, lbl), frames in sequences.items():
+                if lbl != label:
+                    continue
+                if src in test_sources:
+                    test_seqs[(src, lbl)] = frames
+                else:
+                    train_seqs[(src, lbl)] = frames
 
     return train_seqs, test_seqs
 
@@ -302,17 +337,20 @@ def main():
     total_frames = sum(len(f) for f in sequences.values())
     print(f"总帧数: {total_frames}")
 
-    # 2. 按视频源分割
+    # 2. 构建统一标签映射
+    label_map = build_label_map(sequences)
+
+    # 3. 按视频源分割
     train_seqs, test_seqs = split_by_source(sequences, args.test_ratio)
     print(f"训练集视频: {len(train_seqs)}, 测试集视频: {len(test_seqs)}")
 
-    # 3. 构建滑动窗口
+    # 4. 构建滑动窗口
     print(f"窗口大小: {args.window}帧, 步长: {args.stride}帧")
-    train_windows, train_labels, label_map = build_windows(
-        train_seqs, args.window, args.stride, augment=True
+    train_windows, train_labels = build_windows(
+        train_seqs, args.window, args.stride, label_map, augment=True
     )
-    test_windows, test_labels, _ = build_windows(
-        test_seqs, args.window, args.stride, augment=False
+    test_windows, test_labels = build_windows(
+        test_seqs, args.window, args.stride, label_map, augment=False
     )
 
     num_classes = len(label_map)
