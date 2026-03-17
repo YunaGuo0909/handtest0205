@@ -46,10 +46,20 @@ COLORS = [
     (128, 128, 128),
 ]
 
-# ===== LSTM 检测参数 =====
-LSTM_CONFIDENCE_THRESHOLD = 0.50
-CONSISTENCY_REQUIRED = 3
-CONSISTENCY_WINDOW = 5
+# ===== LSTM 检测参数（权重：减少复杂/简单串台）=====
+LSTM_CONFIDENCE_THRESHOLD = 0.55   # 略提高，减少误判为复杂
+CONSISTENCY_REQUIRED = 4          # 需连续 4 帧一致才采纳 LSTM
+CONSISTENCY_WINDOW = 6            # 统计窗口略大
+# 双手且 LSTM 缓冲过半时，简单手势（移动键）需稳定更多帧才输出
+SIMPLE_STABLE_FRAMES_WHEN_TWO_HANDS = 8
+
+# pinch 防闪：连续 N 帧同一状态才切换
+PINCH_STABLE_FRAMES = 4
+# leftright(1) 与 手腕左右侧弯(4) 易混：采纳与切换需更高一致性
+LSTM_CONSISTENCY_EXTRA_FOR_1_4 = 2       # 预测为 1 或 4 时多需 2 帧
+LSTM_CONSISTENCY_EXTRA_SWITCH_1_4 = 2   # 在 1↔4 之间切换时再多 2 帧
+# 双手且 LSTM 置信度不低于此值时，不把右手 pinch 当鼠标（与复杂动作互斥）
+LSTM_PINCH_SUPPRESS_THRESHOLD = 0.45
 
 # ===== 键盘映射 =====
 MOVE_KEYS = {
@@ -62,15 +72,18 @@ EXERCISE_KEYS = {
     "2": "2",
     "3": "3",
     "4": "4",
-    "5": "5",
+    "5": "space",    # 抓手指 → Space
     "6": "6",
     "7": "7",
 }
 
 SWIPE_UP_KEY = "space"
-SWIPE_UP_THRESHOLD = 0.10
-SWIPE_DETECT_FRAMES = 6
+SWIPE_UP_THRESHOLD = 0.07   # 降低，向上挥更易触发 Space
+SWIPE_DETECT_FRAMES = 8    # 多几帧便于捕捉挥动
 ACTION_COOLDOWN = 0.8
+# 抓手指(5) 单独降低门槛，便于触发
+LSTM_CONFIDENCE_FOR_5 = 0.45
+LSTM_CONSISTENCY_FOR_5 = 3
 MOVE_DEBOUNCE_FRAMES = 5
 
 # ===== 鼠标（pinch 捏合控制）=====
@@ -172,12 +185,22 @@ def main():
     smooth_mouse_x = float(SCREEN_W) / 2
     smooth_mouse_y = float(SCREEN_H) / 2
 
+    # 双手时简单手势延迟输出（减少复杂动作开头被当简单）
+    simple_stable_key = None
+    simple_stable_count = 0
+    prev_lstm_confidence = 0.0
+
+    # pinch 防闪：滞后稳定
+    pinch_last_raw = None
+    pinch_same_count = 0
+    pinch_smoothed_state = ""
+
     print("=" * 50)
-    print("手势键盘/鼠标控制 v6 | 按 Q 退出")
-    print(f"  左手: 食指指右→D  食指指左→A")
+    print("手势键盘/鼠标控制 | 按 Q 退出")
+    print(f"  左手: point_right→D  point_left→A  握拳正面→W  握拳背面→S")
+    print(f"  左手: pre_pinch→鼠标位移  pinch→鼠标左键（仅左手）")
     print(f"  右手: 张开+向上挥→Space")
-    print(f"  右手: 捏合(pinch)→鼠标移动+点击")
-    print(f"  手操 1-7 → 数字键 1-7")
+    print(f"  手操 1-7 → 数字键(5=Space)")
     print(f"  屏幕: {SCREEN_W}x{SCREEN_H}")
     print("=" * 50)
 
@@ -240,8 +263,10 @@ def main():
                     lstm_confidence = lstm_probs[lstm_label_idx].item()
                     lstm_prediction = idx_to_label[lstm_label_idx]
 
-                if (lstm_confidence >= LSTM_CONFIDENCE_THRESHOLD
-                        and lstm_prediction != "idle"):
+                conf_ok = lstm_confidence >= LSTM_CONFIDENCE_THRESHOLD
+                if lstm_prediction == "5":
+                    conf_ok = conf_ok or lstm_confidence >= LSTM_CONFIDENCE_FOR_5
+                if conf_ok and lstm_prediction != "idle":
                     prediction_history.append(lstm_prediction)
                 else:
                     prediction_history.append(None)
@@ -249,15 +274,27 @@ def main():
                 counts = Counter(prediction_history)
                 top_pred, top_count = counts.most_common(1)[0]
 
-                if top_pred is not None and top_count >= CONSISTENCY_REQUIRED:
+                required = CONSISTENCY_REQUIRED
+                if top_pred == "5":
+                    required = min(required, LSTM_CONSISTENCY_FOR_5)
+                elif top_pred in ("1", "4"):
+                    required += LSTM_CONSISTENCY_EXTRA_FOR_1_4
+                if (top_pred != lstm_confirmed and lstm_confirmed in ("1", "4")
+                        and top_pred in ("1", "4")):
+                    required += LSTM_CONSISTENCY_EXTRA_SWITCH_1_4
+
+                if top_pred is not None and top_count >= required:
                     lstm_confirmed = top_pred
                     lstm_confirmed_conf = lstm_confidence
                     lstm_confirmed_idx = lstm_label_idx
                     lstm_is_exercise = True
-                elif (lstm_prediction == "idle"
-                      or lstm_confidence < LSTM_CONFIDENCE_THRESHOLD):
-                    lstm_confirmed = ""
-                    lstm_is_exercise = False
+                else:
+                    low_conf = lstm_confidence < LSTM_CONFIDENCE_THRESHOLD
+                    if lstm_prediction == "5":
+                        low_conf = lstm_confidence < LSTM_CONFIDENCE_FOR_5
+                    if lstm_prediction == "idle" or low_conf:
+                        lstm_confirmed = ""
+                        lstm_is_exercise = False
 
             elif not both_hands:
                 prediction_history.clear()
@@ -278,6 +315,13 @@ def main():
 
             # ===== 键盘/鼠标控制 =====
 
+            # LSTM 置信度上升但未达阈值时，抑制简单手势输出（减少串台）
+            suppress_simple_keyboard = (
+                both_hands and has_lstm and lstm_prediction != "idle"
+                and lstm_confidence < LSTM_CONFIDENCE_THRESHOLD
+                and lstm_confidence > prev_lstm_confidence
+            )
+
             if active_output != prev_active_output:
                 if active_output == "LSTM":
                     if current_move_key:
@@ -292,38 +336,77 @@ def main():
             r_mouse_mode = ""  # "", "track", "click"
 
             if active_output == "SIMPLE":
-                # --- 左手: 食指方向 → 持续按键 ---
+                # --- 移动键: 左右手规则一致，左手优先 ---
+                # 任一只手: 握拳正面→W 背面→S；指右→D 指左→A
                 raw_key = None
                 if "Left" in simple_results:
-                    gesture = simple_results["Left"][0]
-                    raw_key = MOVE_KEYS.get(gesture)
+                    gesture, palm_facing = simple_results["Left"][0], simple_results["Left"][1]
+                    if gesture == "fist":
+                        raw_key = "w" if palm_facing else "s"
+                    else:
+                        raw_key = MOVE_KEYS.get(gesture)
+                if raw_key is None and "Right" in simple_results:
+                    gesture, palm_facing = simple_results["Right"][0], simple_results["Right"][1]
+                    if gesture == "fist":
+                        raw_key = "w" if palm_facing else "s"
+                    else:
+                        raw_key = MOVE_KEYS.get(gesture)
 
-                move_history.append(raw_key)
+                use_two_hands_delay = (
+                    both_hands and has_lstm
+                    and len(frame_buffer) >= window_size // 2
+                )
+                if use_two_hands_delay:
+                    # 双手且缓冲过半：需连续 N 帧同一键才输出，减少复杂动作开头误触
+                    if raw_key == simple_stable_key:
+                        simple_stable_count += 1
+                    else:
+                        simple_stable_key = raw_key
+                        simple_stable_count = 1
+                    if simple_stable_count >= SIMPLE_STABLE_FRAMES_WHEN_TWO_HANDS:
+                        new_key = simple_stable_key
+                    else:
+                        new_key = current_move_key
+                else:
+                    simple_stable_key = None
+                    simple_stable_count = 0
+                    move_history.append(raw_key)
+                    new_key = current_move_key
+                    if len(move_history) >= move_history.maxlen:
+                        cnt = Counter(move_history)
+                        most_common, count = cnt.most_common(1)[0]
+                        if count >= move_history.maxlen:
+                            new_key = most_common
 
-                new_key = current_move_key
-                if len(move_history) >= move_history.maxlen:
-                    cnt = Counter(move_history)
-                    most_common, count = cnt.most_common(1)[0]
-                    if count >= move_history.maxlen:
-                        new_key = most_common
-
-                if new_key != current_move_key:
+                if not suppress_simple_keyboard and new_key != current_move_key:
                     if current_move_key:
                         keyboard.release_key(current_move_key)
                     if new_key:
                         keyboard.hold_key(new_key)
                     current_move_key = new_key
 
-                # --- 右手动作 ---
-                if right_lms and "Right" in simple_results:
-                    r_gesture = simple_results["Right"][0]
+                # --- 左手 pinch/pre_pinch → 鼠标（仅左手）---
+                suppress_pinch_for_lstm = (
+                    both_hands and has_lstm
+                    and lstm_confidence >= LSTM_PINCH_SUPPRESS_THRESHOLD
+                )
+                if left_lms and "Left" in simple_results and not suppress_pinch_for_lstm:
+                    l_gesture_raw = simple_results["Left"][0]
+                    raw_pinch = l_gesture_raw if l_gesture_raw in ("pinch", "pre_pinch") else ""
+                    if raw_pinch != pinch_last_raw:
+                        pinch_last_raw = raw_pinch
+                        pinch_same_count = 1
+                    else:
+                        pinch_same_count += 1
+                    if pinch_same_count >= PINCH_STABLE_FRAMES:
+                        pinch_smoothed_state = raw_pinch
+                    l_gesture = pinch_smoothed_state if pinch_smoothed_state else l_gesture_raw
 
-                    # pinch / pre_pinch → 鼠标控制
-                    if r_gesture in ("pinch", "pre_pinch"):
+                    if l_gesture in ("pinch", "pre_pinch"):
                         right_wrist_history.clear()
 
-                        mid_x = (right_lms[4].x + right_lms[8].x) / 2
-                        mid_y = (right_lms[4].y + right_lms[8].y) / 2
+                        mid_x = (left_lms[4].x + left_lms[8].x) / 2
+                        mid_y = (left_lms[4].y + left_lms[8].y) / 2
 
                         sx = (mid_x - MOUSE_MAP_X[0]) / (
                             MOUSE_MAP_X[1] - MOUSE_MAP_X[0]
@@ -347,7 +430,7 @@ def main():
                             int(smooth_mouse_y),
                         )
 
-                        if r_gesture == "pinch":
+                        if l_gesture == "pinch":
                             r_mouse_mode = "click"
                             if not was_pinching:
                                 mouse.click(MouseButton.left)
@@ -355,15 +438,31 @@ def main():
                                 triggered_time = now
                         else:
                             r_mouse_mode = "track"
+                    else:
+                        right_wrist_history.clear()
+                        pinch_last_raw = None
+                        pinch_same_count = 0
+                        pinch_smoothed_state = ""
+                elif suppress_pinch_for_lstm:
+                    pinch_last_raw = None
+                    pinch_same_count = 0
+                    pinch_smoothed_state = ""
+                else:
+                    pinch_last_raw = None
+                    pinch_same_count = 0
+                    pinch_smoothed_state = ""
 
-                    # 张开/四指 + 向上挥 → Space
-                    elif r_gesture in ("open", "four"):
+                # --- 右手: 张开/四指/比耶 + 向上挥 → Space ---
+                if right_lms and "Right" in simple_results:
+                    r_gesture = simple_results["Right"][0]
+                    if r_gesture in ("open", "four", "peace"):
                         right_wrist_history.append(right_lms[0].y)
                         if len(right_wrist_history) >= 2:
                             delta = (right_wrist_history[0]
                                      - right_wrist_history[-1])
                             if (delta > SWIPE_UP_THRESHOLD
-                                    and now - last_swipe_time > ACTION_COOLDOWN):
+                                    and now - last_swipe_time > ACTION_COOLDOWN
+                                    and not suppress_simple_keyboard):
                                 keyboard.tap_key(SWIPE_UP_KEY)
                                 last_swipe_time = now
                                 right_wrist_history.clear()
@@ -371,8 +470,6 @@ def main():
                                 triggered_time = now
                     else:
                         right_wrist_history.clear()
-                else:
-                    right_wrist_history.clear()
 
                 was_pinching = (r_mouse_mode == "click")
                 last_exercise_triggered = None
@@ -391,6 +488,8 @@ def main():
                 keyboard.release_key(current_move_key)
                 current_move_key = None
                 move_history.clear()
+
+            prev_lstm_confidence = lstm_confidence
 
             # ===== HUD =====
             y_offset = 25
@@ -441,7 +540,17 @@ def main():
                 for hand_type in ("Left", "Right"):
                     if hand_type in simple_results:
                         gesture, palm_facing = simple_results[hand_type]
-                        tag = "F" if palm_facing else "B"
+                        # 仅对已指定键位的手势显示键位，其余显示 — 避免误以为有键
+                        if gesture == "point_right":
+                            tag = "D"
+                        elif gesture == "point_left":
+                            tag = "A"
+                        elif gesture == "fist":
+                            tag = "W" if palm_facing else "S"
+                        elif gesture in ("pinch", "pre_pinch"):
+                            tag = "Mouse"
+                        else:
+                            tag = "—"
                         color = ((0, 255, 0) if gesture != "unknown"
                                  else (128, 128, 128))
                         cv2.putText(
@@ -455,9 +564,10 @@ def main():
                         lms = left_lms if hand_type == "Left" else right_lms
                         if lms:
                             wrist = lms[0]
+                            label = f"{gesture} [{tag}]"
                             cv2.putText(
                                 frame,
-                                f"{gesture} [{tag}]",
+                                label,
                                 (int(wrist.x * w) - 40,
                                  int(wrist.y * h) + 30),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2,

@@ -107,14 +107,58 @@ class GestureRecognizer:
         return True
 
     @classmethod
-    def _detect_pinch(cls, landmarks):
-        """拇指+食指指尖靠近（< 0.08）"""
-        return cls._pinch_geometry(landmarks, 0.0, 0.08, others_mult=1.1)
+    def _detect_pinch(cls, landmarks, hand_type="Right"):
+        """捏合：仅右手，拇指+食指指尖靠近且食指伸出、中指握着，排除背面握拳。"""
+        if hand_type != "Left":
+            return False
+        if not cls._pinch_geometry(landmarks, 0.0, 0.08, others_mult=1.1):
+            return False
+        wrist = landmarks[0]
+        index_tip = landmarks[8]
+        middle_tip = landmarks[12]
+        index_middle_dist = math.sqrt(
+            (index_tip.x - middle_tip.x) ** 2 + (index_tip.y - middle_tip.y) ** 2
+        )
+        if index_middle_dist < 0.12:
+            return False
+        index_reach = math.sqrt(
+            (index_tip.x - wrist.x) ** 2 + (index_tip.y - wrist.y) ** 2
+        )
+        middle_reach = math.sqrt(
+            (middle_tip.x - wrist.x) ** 2 + (middle_tip.y - wrist.y) ** 2
+        )
+        if index_reach < 0.15 or index_reach < middle_reach * 1.2:
+            return False
+        return True
 
     @classmethod
-    def _detect_pre_pinch(cls, landmarks):
-        """拇指正在接近食指（0.08-0.18），预捏合状态"""
-        return cls._pinch_geometry(landmarks, 0.08, 0.18, others_mult=1.2)
+    def _detect_pre_pinch(cls, landmarks, hand_type="Right"):
+        """预捏合：仅右手，拇指+食指伸出、其余握着，且食指与中指明显分开。
+
+        约束：拇指-食指 0.08~0.18；捏合点伸出掌外；食指与中指指尖距离 > 0.12；
+        食指明显比中指伸得远（食指伸出、中指握着），避免握拳被误判。
+        """
+        if hand_type != "Left":
+            return False
+        if not cls._pinch_geometry(landmarks, 0.08, 0.18, others_mult=1.2):
+            return False
+        wrist = landmarks[0]
+        index_tip = landmarks[8]
+        middle_tip = landmarks[12]
+        index_middle_dist = math.sqrt(
+            (index_tip.x - middle_tip.x) ** 2 + (index_tip.y - middle_tip.y) ** 2
+        )
+        if index_middle_dist < 0.12:
+            return False
+        index_reach = math.sqrt(
+            (index_tip.x - wrist.x) ** 2 + (index_tip.y - wrist.y) ** 2
+        )
+        middle_reach = math.sqrt(
+            (middle_tip.x - wrist.x) ** 2 + (middle_tip.y - wrist.y) ** 2
+        )
+        if index_reach < 0.15 or index_reach < middle_reach * 1.2:
+            return False
+        return True
 
     # ------------------------------------------------------------------
     # 独立检测器：指向（pointing）— 不依赖通用手指检测
@@ -203,10 +247,10 @@ class GestureRecognizer:
 
         # ========== 独立检测器（优先级最高，不走通用逻辑）==========
 
-        if cls._detect_pinch(landmarks):
+        if cls._detect_pinch(landmarks, hand_type):
             return "pinch", 0.85, palm_facing
 
-        if cls._detect_pre_pinch(landmarks):
+        if cls._detect_pre_pinch(landmarks, hand_type):
             return "pre_pinch", 0.85, palm_facing
 
         direction = cls._detect_pointing(landmarks)
@@ -226,6 +270,9 @@ class GestureRecognizer:
 
         if extended_count == 0:
             return "fist", confidence, palm_facing
+        # 只伸一根且不是拇指/食指时视为松握拳，便于 W/S 触发
+        if extended_count == 1 and not thumb and not index:
+            return "fist", 0.75, palm_facing
 
         if extended_count == 5:
             return "open", confidence, palm_facing
