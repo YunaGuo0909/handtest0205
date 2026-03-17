@@ -1,14 +1,13 @@
-# 手势数据采集工具（手保健操 + 通用手势）
-# 两种模式：
-#   1) 视频批量模式：把不同人录的视频按动作名放进文件夹，批量提取关键点
-#   2) 摄像头实时模式：对着摄像头做手势，按数字键标记类别实时录制
+# Gesture data collection (hand exercises + generic gestures)
+# Modes:
+#   1) Batch from videos: put videos in folders by action name, extract landmarks
+#   2) Realtime camera: do gestures in front of camera, press number keys to label and record
 #
-# 用法:
-#   python collect_data.py --videos training_videos/                 # 视频批量
-#   python collect_data.py --videos training_videos/ --no-flip       # 后置摄像头录的视频不镜像
-#   python collect_data.py --camera                                  # 摄像头实时
-#   python collect_data.py --videos training_videos/ --camera        # 先处理视频再实时补录
-#   python collect_data.py --videos training_videos/ --preview       # 批量时弹窗预览检测效果
+# Usage:
+#   python collect_data.py --videos training_videos/
+#   python collect_data.py --videos training_videos/ --no-flip   # no mirror for back-camera videos
+#   python collect_data.py --camera
+#   python collect_data.py --videos training_videos/ --preview   # preview detection when batching
 
 import argparse
 import csv
@@ -22,12 +21,12 @@ from hand_tracker import HandTracker
 from gesture_recognizer import GestureRecognizer
 from config import CAMERA_ID, CAMERA_WIDTH, CAMERA_HEIGHT
 
-# ========== 配置 ==========
+# ========== Config ==========
 
 OUTPUT_CSV = "gesture_data.csv"
 VIDEO_EXTENSIONS = (".mp4", ".avi", ".mov", ".mkv", ".webm")
 
-# 摄像头实时模式下的按键 → 标签映射（手保健操动作）
+# Key -> label for camera realtime mode (hand exercises)
 KEY_LABEL_MAP = {
     ord("1"): "leftright",
     ord("2"): "手背互拍",
@@ -39,8 +38,8 @@ KEY_LABEL_MAP = {
     ord("0"): "idle",
 }
 
-# 双手动态手势需要把同一帧两只手的数据合并到一行
-# 每行存: 左手 63维 + 右手 63维 = 126维（检测不到的手填 0）
+# Both hands: merge left+right landmarks per frame into one row
+# Row: left 63-d + right 63-d = 126-d (missing hand filled with 0)
 CSV_HEADER = (
     ["label", "source", "frame_idx"]
     + [f"L_x{i}" for i in range(21)]
@@ -53,7 +52,7 @@ CSV_HEADER = (
 
 
 def _extract_hand_coords(landmarks):
-    """提取单只手的 63 维坐标 (x0..x20, y0..y20, z0..z20)"""
+    """Extract 63-d coords for one hand (x0..x20, y0..y20, z0..z20)."""
     xs = [round(lm.x, 6) for lm in landmarks]
     ys = [round(lm.y, 6) for lm in landmarks]
     zs = [round(lm.z, 6) for lm in landmarks]
@@ -64,14 +63,14 @@ ZERO_HAND = [0.0] * 63
 
 
 def frame_to_row(label, source, frame_idx, left_lms, right_lms):
-    """将一帧的双手数据合并成一行 CSV (左手63维 + 右手63维)"""
+    """Merge one frame's both-hand data into one CSV row (left 63-d + right 63-d)."""
     left_coords = _extract_hand_coords(left_lms) if left_lms else ZERO_HAND
     right_coords = _extract_hand_coords(right_lms) if right_lms else ZERO_HAND
     return [label, source, frame_idx] + left_coords + right_coords
 
 
 def _parse_hands(results):
-    """从 MediaPipe 结果中分离左右手关键点"""
+    """Split MediaPipe results into left/right hand landmarks."""
     left_lms = None
     right_lms = None
     if results.hand_landmarks:
@@ -85,10 +84,10 @@ def _parse_hands(results):
 
 
 def process_video(tracker, video_path, label, writer, stats, flip=True, preview=False):
-    """处理单个视频文件，提取每帧的双手关键点"""
+    """Process one video file, extract both-hand landmarks per frame."""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        print(f"  [跳过] 无法打开: {video_path}")
+        print(f"  [Skip] Cannot open: {video_path}")
         return
 
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -98,7 +97,7 @@ def process_video(tracker, video_path, label, writer, stats, flip=True, preview=
     saved = 0
     no_hand_frames = 0
 
-    print(f"  处理: {source_name}  ({total_frames}帧, {fps:.0f}fps)")
+    print(f"  Processing: {source_name}  ({total_frames} frames, {fps:.0f} fps)")
 
     while True:
         ret, frame = cap.read()
@@ -134,7 +133,7 @@ def process_video(tracker, video_path, label, writer, stats, flip=True, preview=
         frame_idx += 1
         if frame_idx % 100 == 0:
             pct = frame_idx / max(total_frames, 1) * 100
-            print(f"    进度: {frame_idx}/{total_frames} ({pct:.0f}%)")
+            print(f"    Progress: {frame_idx}/{total_frames} ({pct:.0f}%)")
 
     cap.release()
     if preview:
@@ -142,24 +141,21 @@ def process_video(tracker, video_path, label, writer, stats, flip=True, preview=
 
     stats[label] = stats.get(label, 0) + saved
     detect_rate = saved / max(frame_idx, 1) * 100
-    print(f"    完成: {saved}/{frame_idx} 帧检测到手 ({detect_rate:.0f}%), 丢失 {no_hand_frames} 帧")
+    print(f"    Done: {saved}/{frame_idx} frames with hands ({detect_rate:.0f}%), missed {no_hand_frames} frames")
 
 
 def batch_from_videos(tracker, videos_dir, writer, stats, flip=True, preview=False):
-    """批量处理视频文件夹
+    """Process all videos in folder; subfolder name = gesture label.
 
-    文件夹结构:
+    Folder layout:
         training_videos/
-        ├── leftright/
-        │   ├── person1.mp4
-        │   └── person2.mp4
-        ├── 手背互拍/
-        │   └── person1.mp4
-        └── 虎口互击/
-            └── ...
+        ├── 1/   or  leftright/
+        │   ├── p1_001.mp4
+        │   └── ...
+        └── ...
     """
     if not os.path.isdir(videos_dir):
-        print(f"错误: 目录不存在 → {videos_dir}")
+        print(f"Error: directory not found → {videos_dir}")
         sys.exit(1)
 
     gesture_dirs = sorted(
@@ -168,18 +164,16 @@ def batch_from_videos(tracker, videos_dir, writer, stats, flip=True, preview=Fal
     )
 
     if not gesture_dirs:
-        print(f"错误: {videos_dir} 下没有子文件夹")
-        print("请按以下结构组织视频：")
+        print(f"Error: no subfolders under {videos_dir}")
+        print("Organize videos like:")
         print("  training_videos/")
-        print("  ├── leftright/")
-        print("  │   ├── person1.mp4")
-        print("  │   └── person2.mp4")
-        print("  ├── 手背互拍/")
-        print("  │   └── person1.mp4")
+        print("  ├── 1/  (or leftright/)")
+        print("  │   ├── p1_001.mp4")
+        print("  │   └── ...")
         print("  └── ...")
         sys.exit(1)
 
-    print(f"\n发现 {len(gesture_dirs)} 种动作: {', '.join(gesture_dirs)}")
+    print(f"\nFound {len(gesture_dirs)} gesture(s): {', '.join(gesture_dirs)}")
     print("=" * 50)
 
     for gesture_name in gesture_dirs:
@@ -190,10 +184,10 @@ def batch_from_videos(tracker, videos_dir, writer, stats, flip=True, preview=Fal
         )
 
         if not videos:
-            print(f"\n[{gesture_name}] 没有视频文件，跳过")
+            print(f"\n[{gesture_name}] No video files, skip")
             continue
 
-        print(f"\n[{gesture_name}] {len(videos)} 个视频")
+        print(f"\n[{gesture_name}] {len(videos)} video(s)")
 
         for vfile in videos:
             vpath = os.path.join(gesture_path, vfile)
@@ -202,10 +196,10 @@ def batch_from_videos(tracker, videos_dir, writer, stats, flip=True, preview=Fal
 
 
 def realtime_from_camera(tracker, writer, stats):
-    """摄像头实时录制模式"""
+    """Realtime camera recording: press number keys to label, same key again to stop."""
     cap = cv2.VideoCapture(CAMERA_ID)
     if not cap.isOpened():
-        print("错误: 打不开摄像头")
+        print("Error: cannot open camera")
         return
 
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
@@ -216,12 +210,12 @@ def realtime_from_camera(tracker, writer, stats):
     session_saved = 0
 
     print("\n" + "=" * 50)
-    print("摄像头实时录制模式")
-    print("按数字键选择动作标签，再次按同一键停止录制")
+    print("Realtime camera recording")
+    print("Press number key to select label, same key again to stop")
     print("-" * 50)
     for key, label in sorted(KEY_LABEL_MAP.items()):
         print(f"  [{chr(key)}] {label}")
-    print("  [Q] 退出")
+    print("  [Q] Quit")
     print("=" * 50)
 
     while True:
@@ -265,14 +259,14 @@ def realtime_from_camera(tracker, writer, stats):
         elif key in KEY_LABEL_MAP:
             new_label = KEY_LABEL_MAP[key]
             if current_label == new_label:
-                print(f"  停止录制 [{current_label}] (本次 {session_saved} 条)")
+                print(f"  Stop recording [{current_label}] (this session {session_saved} rows)")
                 current_label = None
                 session_saved = 0
             else:
                 if current_label:
-                    print(f"  切换: [{current_label}] → [{new_label}]")
+                    print(f"  Switch: [{current_label}] → [{new_label}]")
                 else:
-                    print(f"  开始录制 [{new_label}]")
+                    print(f"  Start recording [{new_label}]")
                 current_label = new_label
                 session_saved = 0
 
@@ -283,23 +277,23 @@ def realtime_from_camera(tracker, writer, stats):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="手势数据采集工具（手保健操 + 通用手势）")
-    parser.add_argument("--videos", type=str, help="视频文件夹路径（按动作名分子文件夹）")
-    parser.add_argument("--camera", action="store_true", help="启用摄像头实时录制模式")
-    parser.add_argument("--output", type=str, default=OUTPUT_CSV, help=f"输出CSV路径 (默认: {OUTPUT_CSV})")
+    parser = argparse.ArgumentParser(description="Gesture data collection (hand exercises + generic)")
+    parser.add_argument("--videos", type=str, help="Video folder (subfolders = gesture labels)")
+    parser.add_argument("--camera", action="store_true", help="Realtime camera recording")
+    parser.add_argument("--output", type=str, default=OUTPUT_CSV, help=f"Output CSV (default: {OUTPUT_CSV})")
     parser.add_argument("--no-flip", action="store_true",
-                        help="视频不做水平镜像（后置摄像头录的视频用这个）")
+                        help="Do not mirror video (for back-camera recordings)")
     parser.add_argument("--preview", action="store_true",
-                        help="批量处理时弹窗预览检测效果")
+                        help="Show preview window when batching")
     parser.add_argument("--overwrite", action="store_true",
-                        help="视频模式下覆盖已有 CSV，用当前文件夹内全部视频重新生成（新增视频后重训时用）")
+                        help="Overwrite existing CSV and rebuild from all videos in folder")
     args = parser.parse_args()
 
     if not args.videos and not args.camera:
         parser.print_help()
-        print("\n示例:")
+        print("\nExamples:")
         print("  python collect_data.py --videos training_videos/")
-        print("  python collect_data.py --videos training_videos/ --overwrite   # 新增视频后重训：覆盖 CSV 再采集")
+        print("  python collect_data.py --videos training_videos/ --overwrite")
         print("  python collect_data.py --videos training_videos/ --no-flip")
         print("  python collect_data.py --videos training_videos/ --preview")
         print("  python collect_data.py --camera")
@@ -314,23 +308,23 @@ def main():
         csvfile = open(args.output, "w", newline="", encoding="utf-8")
         writer = csv.writer(csvfile)
         writer.writerow(CSV_HEADER)
-        print(f"覆盖并重新生成: {args.output}（当前 training_videos 下全部视频）")
+        print(f"Overwriting and rebuilding: {args.output} (all videos in folder)")
     else:
         csvfile = open(args.output, "a", newline="", encoding="utf-8")
         writer = csv.writer(csvfile)
         if not file_exists:
             writer.writerow(CSV_HEADER)
-            print(f"创建新数据文件: {args.output}")
+            print(f"Creating new data file: {args.output}")
         else:
-            print(f"追加到已有数据文件: {args.output}")
+            print(f"Appending to existing file: {args.output}")
 
     stats = {}
     do_flip = not args.no_flip
 
     try:
         if args.videos:
-            print("\n===== 视频批量采集 =====")
-            print(f"镜像翻转: {'是' if do_flip else '否'}")
+            print("\n===== Batch from videos =====")
+            print(f"Mirror flip: {'yes' if do_flip else 'no'}")
             batch_from_videos(tracker, args.videos, writer, stats,
                               flip=do_flip, preview=args.preview)
 
@@ -339,17 +333,17 @@ def main():
     finally:
         csvfile.close()
 
-    # 统计汇总
+    # Summary
     print("\n" + "=" * 50)
-    print("采集完成！数据统计：")
+    print("Collection done. Stats:")
     print("-" * 50)
     total = 0
     for label, count in sorted(stats.items()):
-        print(f"  {label:20s} → {count:6d} 条")
+        print(f"  {label:20s} → {count:6d} rows")
         total += count
     print("-" * 50)
-    print(f"  {'合计':20s} → {total:6d} 条")
-    print(f"  保存至: {args.output}")
+    print(f"  {'Total':20s} → {total:6d} rows")
+    print(f"  Saved to: {args.output}")
     print("=" * 50)
 
 

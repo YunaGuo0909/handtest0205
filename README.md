@@ -1,79 +1,79 @@
-# 手势识别 + 键盘/鼠标控制
+# Gesture Recognition + Keyboard/Mouse Control
 
-基于 MediaPipe 的手部关键点检测，支持**简单手势**（规则）与**复杂手势**（LSTM），映射到键盘与鼠标，可用于游戏或无障碍控制。
+Hand landmark detection via MediaPipe with **simple gestures** (rule-based) and **complex gestures** (LSTM). Maps to keyboard and mouse for games or accessibility.
 
-## 环境
+## Requirements
 
 - Python 3.8+
-- 摄像头（本机或外接）
+- Webcam (built-in or external)
 
-## 安装
+## Install
 
 ```bash
 pip install -r requirements.txt
 ```
 
-首次运行时会自动下载 MediaPipe 手部模型（约 10MB），无需手动放置。
+On first run, the MediaPipe hand model (~10MB) is downloaded automatically.
 
-## 直接运行（克隆即用）
+## Run (clone and use)
 
 ```bash
 python demo_gesture.py
 ```
 
-- **无 `gesture_model.pt`**：仅启用简单手势（移动、指向、握拳、捏合鼠标等），程序会提示“仅使用简单手势识别”。
-- **有 `gesture_model.pt`**：同时启用复杂手势（手保健操等），对应键位见下方。
+- **Without `gesture_model.pt`**: Only simple gestures (move, point, fist, pinch mouse, etc.). The program will report "simple gestures only".
+- **With `gesture_model.pt`**: Complex gestures (hand exercises) are also enabled. Key bindings are listed below.
 
-退出：按 **Q**。
+Press **Q** to quit.
 
-## 键位说明（当前配置）
+## Key bindings (current)
 
-| 类型 | 手势 | 键位/效果 |
-|------|------|-----------|
-| 左手 | 食指指右/指左 | D / A |
-| 左手 | 握拳（正面/背面） | W / S |
-| 左手 | pre_pinch / pinch | 鼠标移动 / 左键点击 |
-| 右手 | 张开掌心向上 + 四指向上挥 | Space |
-| 复杂(1) | leftright | T |
-| 复杂(5) | 抓手指 | Space |
-| 复杂(6) | 掌根互拍 | E |
-| 复杂(7) | 虎口互击 | Q |
-| 复杂(2,3,4) | 其余手操 | 2 / 3 / 4 |
+| Hand / type | Gesture | Key / effect |
+|-------------|---------|--------------|
+| Left | Point right / point left | D / A |
+| Left | Fist (palm / back) | W / S |
+| Left | pre_pinch / pinch | Mouse move / left click |
+| Right | Palm up + swipe up | Space |
+| Complex (1) | leftright | T |
+| Complex (5) | Grab fingers | Space |
+| Complex (6) | Palm-heel clap | E |
+| Complex (7) | Thumb-webbing tap | Q |
+| Complex (2,3,4) | Other exercises | 2 / 3 / 4 |
 
-## 可选：训练复杂手势
+## Optional: train complex gestures
 
-若要使用复杂手势识别，需先采集数据并训练 LSTM（或使用已有的 `gesture_model.pt`）。
+To use complex gesture recognition, collect data and train the LSTM (or use an existing `gesture_model.pt`).
 
-1. **准备视频**：按动作类别分子文件夹，例如：
+1. **Organize videos** by action in subfolders, e.g.:
    ```
    training_videos/
    ├── 1/          # leftright
    │   ├── p1_001.mp4
    │   └── ...
-   ├── 2/          # 手背互拍
+   ├── 2/
    ├── ...
-   └── 7/          # 虎口互击
+   └── 7/
    ```
 
-2. **从视频生成数据**（会覆盖已有 `gesture_data.csv`）：
+2. **Build CSV from videos** (overwrites existing `gesture_data.csv`):
    ```bash
    python collect_data.py --videos training_videos/ --overwrite
    ```
 
-3. **训练模型**：
+3. **Train the model**:
    ```bash
    python train_gesture.py
    ```
-   完成后会生成 `gesture_model.pt`，再运行 `demo_gesture.py` 即可使用复杂手势。
+   This produces `gesture_model.pt`. Run `demo_gesture.py` again to use complex gestures.
 
-## 项目结构（上传到 Git 的部分）
+## Project layout (what goes to Git)
 
-- `demo_gesture.py` — 主程序（识别 + 键盘/鼠标）
-- `hand_tracker.py` — 手部追踪（MediaPipe）
-- `gesture_recognizer.py` — 简单手势规则
-- `train_gesture.py` — 复杂手势 LSTM 训练
-- `collect_data.py` — 从视频采集关键点数据
-- `keyboard_controller.py` / `config.py` — 键盘与配置
+- `demo_gesture.py` — Main app (recognition + keyboard/mouse)
+- `hand_tracker.py` — Hand tracking (MediaPipe)
+- `gesture_recognizer.py` — Simple gesture rules
+- `train_gesture.py` — LSTM training for complex gestures
+- `collect_data.py` — Extract landmarks from videos
+- `keyboard_controller.py` / `config.py` — Keyboard and config
 - `requirements.txt` / `README.md`
 
-以下**不会**提交（已在 `.gitignore` 中）：训练视频、`gesture_data.csv`、`gesture_model.pt`、手部模型文件、`__pycache__` 等。
+Not committed (in `.gitignore`): training videos, `gesture_data.csv`, `gesture_model.pt`, hand model files, `__pycache__`, etc.

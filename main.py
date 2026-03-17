@@ -1,6 +1,5 @@
-# 手势键盘控制
-# 摄像头实时追踪双手 → 识别手势 → 模拟键盘按键控制游戏角色
-# 运行: python main.py
+# Gesture keyboard control: track hands → recognize gestures → simulate keys for game control.
+# Run: python main.py
 
 import cv2
 import time
@@ -22,17 +21,17 @@ def main():
 
     cap = cv2.VideoCapture(CAMERA_ID)
     if not cap.isOpened():
-        print("打不开摄像头")
+        print("Cannot open camera")
         return
 
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
 
     print("=" * 50)
-    print("手势键盘控制 已启动 | 按 Q 退出")
-    print(f"左手({MOVE_HAND}): 食指指右→D  食指指左→A  无→停止")
-    print(f"右手({ACTION_HAND}): 向上挥→W(跳)  指向→Shift(加速)")
-    print(f"双手: 双拳展开→E  手腕碰撞→Q")
+    print("Gesture keyboard control | Press Q to quit")
+    print(f"Left({MOVE_HAND}): point right→D  point left→A  none→stop")
+    print(f"Right({ACTION_HAND}): swipe up→W(jump)  point→Shift(sprint)")
+    print(f"Both: fists to open→E  wrist clash→Q")
     print("=" * 50)
 
     fps_count = 0
@@ -120,7 +119,7 @@ def main():
         keyboard.close()
         cap.release()
         cv2.destroyAllWindows()
-        print("已停止")
+        print("Stopped")
 
 
 if __name__ == "__main__":

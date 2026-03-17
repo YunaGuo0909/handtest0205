@@ -1,35 +1,35 @@
-# 全局配置
+# Global config
 
-# ========== 摄像头 ==========
+# ========== Camera ==========
 CAMERA_ID = 0
 CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
 
-# ========== 手部分工 ==========
-MOVE_HAND = "Left"              # 左手控制移动（连续）
-ACTION_HAND = "Right"           # 右手控制技能（瞬发）
+# ========== Hand roles ==========
+MOVE_HAND = "Left"              # Left hand: continuous move
+ACTION_HAND = "Right"           # Right hand: tap actions
 
-# ========== 防抖 ==========
-MOVE_STABLE_FRAMES = 5          # 移动指令防抖帧数
-ACTION_COOLDOWN = 0.8           # 瞬发动作冷却时间(秒)
-COMBO_COOLDOWN = 1.5            # 双手组合冷却时间(秒)
+# ========== Debounce ==========
+MOVE_STABLE_FRAMES = 5          # Move key debounce frames
+ACTION_COOLDOWN = 0.8           # Tap action cooldown (seconds)
+COMBO_COOLDOWN = 1.5            # Two-hand combo cooldown (seconds)
 
-# ========== 运动检测 ==========
-SWIPE_UP_THRESHOLD = 0.15       # 手背向上挥动的 y 坐标变化阈值
-SWIPE_HISTORY_FRAMES = 4        # 追踪最近 N 帧计算挥动
-HANDS_TOUCH_THRESHOLD = 0.08    # 双手碰触距离阈值
-POINTING_X_THRESHOLD = 0.04     # 食指水平分量阈值（过滤竖直方向指向）
+# ========== Motion ==========
+SWIPE_UP_THRESHOLD = 0.15       # Swipe up: y-delta threshold
+SWIPE_HISTORY_FRAMES = 4        # Frames to compute swipe
+HANDS_TOUCH_THRESHOLD = 0.08    # Wrist touch distance threshold
+POINTING_X_THRESHOLD = 0.04     # Pointing horizontal component (filter vertical)
 
-# ========== MediaPipe 模型 ==========
+# ========== MediaPipe model ==========
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
 MODEL_PATH = "hand_landmarker.task"
 
-# ========== 检测置信度 ==========
+# ========== Detection confidence ==========
 MIN_DETECTION_CONFIDENCE = 0.3
 MIN_PRESENCE_CONFIDENCE = 0.3
 MIN_TRACKING_CONFIDENCE = 0.3
 
-# ========== 手部关键点名称 (21个) ==========
+# ========== Hand landmark names (21) ==========
 LANDMARK_NAMES = [
     "WRIST",
     "THUMB_CMC", "THUMB_MCP", "THUMB_IP", "THUMB_TIP",
@@ -39,7 +39,7 @@ LANDMARK_NAMES = [
     "PINKY_MCP", "PINKY_PIP", "PINKY_DIP", "PINKY_TIP",
 ]
 
-# ========== 骨架连线 ==========
+# ========== Skeleton connections ==========
 BONE_CONNECTIONS = [
     (0, 1), (1, 2), (2, 3), (3, 4),
     (0, 5), (5, 6), (6, 7), (7, 8),
@@ -49,7 +49,7 @@ BONE_CONNECTIONS = [
     (5, 9), (9, 13), (13, 17),
 ]
 
-# ========== 手指颜色 ==========
+# ========== Finger colors ==========
 FINGER_COLORS = [
     (255, 0, 255),
     (255, 165, 0),

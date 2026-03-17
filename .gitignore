@@ -5,7 +5,7 @@ __pycache__/
 .env
 .python-version
 
-# 模型与数据（体积大或可本地生成，不入库）
+# Models and data (large or generated locally; not committed)
 hand_landmarker.task
 *.task
 *.pt
@@ -13,7 +13,7 @@ gesture_data.csv
 hand_data.json
 training_videos/
 
-# 其它
+# Other
 *.json
 !pyproject.toml
 uv.lock

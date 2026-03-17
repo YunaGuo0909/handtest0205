@@ -1,11 +1,8 @@
-# 手势识别 + 键盘/鼠标控制（整合版 v6）
-# 双引擎并行 + 键盘/鼠标输出：
-#   - 简单手势: 左手食指指右→D, 指左→A (持续)
-#               右手张开+向上挥→Space (瞬发)
-#               右手捏合(pinch)→鼠标移动+点击
-#   - LSTM 手操: 复杂动作 1-7 → 数字键 1-7 (瞬发)
-#
-# 用法: python demo_gesture.py
+# Gesture recognition + keyboard/mouse control
+# Dual engine (simple + LSTM) with keyboard/mouse output:
+#   - Simple: left hand point right→D, point left→A (hold); right palm up + swipe up→Space (tap); pinch→mouse
+#   - LSTM: complex gestures 1-7 → keys (tap)
+# Usage: python demo_gesture.py
 
 import numpy as np
 import torch
@@ -46,22 +43,22 @@ COLORS = [
     (128, 128, 128),
 ]
 
-# ===== LSTM 检测参数（权重：减少复杂/简单串台）=====
-LSTM_CONFIDENCE_THRESHOLD = 0.55   # 略提高，减少误判为复杂
-CONSISTENCY_REQUIRED = 4          # 需连续 4 帧一致才采纳 LSTM
-CONSISTENCY_WINDOW = 6            # 统计窗口略大
-# 双手且 LSTM 缓冲过半时，简单手势（移动键）需稳定更多帧才输出
+# ===== LSTM params (reduce simple/complex cross-talk) =====
+LSTM_CONFIDENCE_THRESHOLD = 0.55   # Slightly higher to reduce false complex
+CONSISTENCY_REQUIRED = 4          # Require 4 consecutive same frames to accept LSTM
+CONSISTENCY_WINDOW = 6            # Larger window for voting
+# When both hands + LSTM buffer half-full, simple move key needs more stable frames
 SIMPLE_STABLE_FRAMES_WHEN_TWO_HANDS = 8
 
-# pinch 防闪：连续 N 帧同一状态才切换
+# Pinch anti-flicker: same state for N frames before switching
 PINCH_STABLE_FRAMES = 4
-# leftright(1) 与 手腕左右侧弯(4) 易混：采纳与切换需更高一致性
-LSTM_CONSISTENCY_EXTRA_FOR_1_4 = 2       # 预测为 1 或 4 时多需 2 帧
-LSTM_CONSISTENCY_EXTRA_SWITCH_1_4 = 2   # 在 1↔4 之间切换时再多 2 帧
-# 双手且 LSTM 置信度不低于此值时，不把右手 pinch 当鼠标（与复杂动作互斥）
+# leftright(1) vs wrist left/right(4) easily confused: need extra consistency
+LSTM_CONSISTENCY_EXTRA_FOR_1_4 = 2       # +2 frames when predicting 1 or 4
+LSTM_CONSISTENCY_EXTRA_SWITCH_1_4 = 2   # +2 more when switching between 1 and 4
+# When both hands and LSTM confidence >= this, do not use pinch for mouse (mutex with complex)
 LSTM_PINCH_SUPPRESS_THRESHOLD = 0.45
 
-# ===== 键盘映射 =====
+# ===== Keyboard mapping =====
 MOVE_KEYS = {
     "point_right": "d",
     "point_left":  "a",
@@ -72,21 +69,21 @@ EXERCISE_KEYS = {
     "2": "2",
     "3": "3",
     "4": "4",
-    "5": "space",    # 抓手指 → Space
-    "6": "e",        # 掌根互拍 zhanggenhupai → E
-    "7": "q",        # 虎口互击 hukouhuji → Q
+    "5": "space",    # Grab fingers → Space
+    "6": "e",        # Palm-heel clap → E
+    "7": "q",        # Thumb-webbing tap → Q
 }
 
 SWIPE_UP_KEY = "space"
-SWIPE_UP_THRESHOLD = 0.07   # 降低，向上挥更易触发 Space
-SWIPE_DETECT_FRAMES = 8    # 多几帧便于捕捉挥动
+SWIPE_UP_THRESHOLD = 0.07   # Lower so swipe up triggers Space more easily
+SWIPE_DETECT_FRAMES = 8    # More frames to capture swipe
 ACTION_COOLDOWN = 0.8
-# 抓手指(5) 单独降低门槛，便于触发
+# Exercise 5 (grab fingers): lower threshold for easier trigger
 LSTM_CONFIDENCE_FOR_5 = 0.45
 LSTM_CONSISTENCY_FOR_5 = 3
 MOVE_DEBOUNCE_FRAMES = 5
 
-# ===== 鼠标（pinch 捏合控制）=====
+# ===== Mouse (pinch control) =====
 MOUSE_SMOOTH = 0.35
 MOUSE_MAP_X = (0.15, 0.85)
 MOUSE_MAP_Y = (0.15, 0.85)
@@ -136,11 +133,11 @@ def main():
     has_lstm = os.path.exists(MODEL_PATH)
 
     if has_lstm:
-        print("加载 LSTM 模型...")
+        print("Loading LSTM model...")
         model, device, idx_to_label, window_size, use_velocity = load_model(MODEL_PATH)
-        print(f"LSTM 就绪 | 窗口: {window_size}帧 | 速度特征: {use_velocity} | 类别: {list(idx_to_label.values())}")
+        print(f"LSTM ready | window: {window_size} frames | velocity: {use_velocity} | classes: {list(idx_to_label.values())}")
     else:
-        print(f"[提示] 未找到 {MODEL_PATH}，仅使用简单手势识别")
+        print(f"[Note] {MODEL_PATH} not found, using simple gestures only")
         model, device, idx_to_label, window_size, use_velocity = None, None, {}, 30, False
 
     tracker = HandTracker()
@@ -149,7 +146,7 @@ def main():
 
     cap = cv2.VideoCapture(CAMERA_ID)
     if not cap.isOpened():
-        print("打不开摄像头")
+        print("Cannot open camera")
         return
 
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
@@ -158,7 +155,7 @@ def main():
     frame_buffer = []
     prediction_history = deque(maxlen=CONSISTENCY_WINDOW)
 
-    # LSTM 状态
+    # LSTM state
     lstm_prediction = ""
     lstm_confidence = 0.0
     lstm_label_idx = -1
@@ -167,11 +164,11 @@ def main():
     lstm_confirmed_conf = 0.0
     lstm_confirmed_idx = -1
 
-    # 输出模式
+    # Output mode
     active_output = "SIMPLE"
     prev_active_output = "SIMPLE"
 
-    # 键盘状态
+    # Keyboard state
     move_history = deque(maxlen=MOVE_DEBOUNCE_FRAMES)
     current_move_key = None
     right_wrist_history = deque(maxlen=SWIPE_DETECT_FRAMES)
@@ -180,28 +177,28 @@ def main():
     triggered_display = ""
     triggered_time = 0
 
-    # 鼠标状态
+    # Mouse state
     was_pinching = False
     smooth_mouse_x = float(SCREEN_W) / 2
     smooth_mouse_y = float(SCREEN_H) / 2
 
-    # 双手时简单手势延迟输出（减少复杂动作开头被当简单）
+    # When both hands: delay simple gesture output (avoid complex start counted as simple)
     simple_stable_key = None
     simple_stable_count = 0
     prev_lstm_confidence = 0.0
 
-    # pinch 防闪：滞后稳定
+    # Pinch anti-flicker: lagged stable state
     pinch_last_raw = None
     pinch_same_count = 0
     pinch_smoothed_state = ""
 
     print("=" * 50)
-    print("手势键盘/鼠标控制 | 按 Q 退出")
-    print(f"  左手: point_right→D  point_left→A  握拳正面→W  握拳背面→S")
-    print(f"  左手: pre_pinch→鼠标位移  pinch→鼠标左键（仅左手）")
-    print(f"  右手: 张开+向上挥→Space")
-    print(f"  手操 1-7 → 数字键(5=Space)")
-    print(f"  屏幕: {SCREEN_W}x{SCREEN_H}")
+    print("Gesture keyboard/mouse control | Press Q to quit")
+    print(f"  Left: point_right→D  point_left→A  fist palm→W  fist back→S")
+    print(f"  Left: pre_pinch→mouse move  pinch→left click (left hand only)")
+    print(f"  Right: palm up + swipe up→Space")
+    print(f"  Exercises 1-7 → 1/T/2/3/4/Space/E/Q")
+    print(f"  Screen: {SCREEN_W}x{SCREEN_H}")
     print("=" * 50)
 
     try:
@@ -231,7 +228,7 @@ def main():
             num_hands = (1 if left_lms else 0) + (1 if right_lms else 0)
             both_hands = left_lms is not None and right_lms is not None
 
-            # ===== 简单手势 =====
+            # ===== Simple gestures =====
             simple_results = {}
             if results.hand_landmarks:
                 for lms, handed in zip(results.hand_landmarks, results.handedness):
@@ -305,7 +302,7 @@ def main():
             if num_hands == 0:
                 frame_buffer.clear()
 
-            # ===== 输出决策 =====
+            # ===== Output decision =====
             if num_hands <= 1:
                 active_output = "SIMPLE"
             elif lstm_is_exercise:
@@ -313,9 +310,9 @@ def main():
             else:
                 active_output = "SIMPLE"
 
-            # ===== 键盘/鼠标控制 =====
+            # ===== Keyboard/mouse control =====
 
-            # LSTM 置信度上升但未达阈值时，抑制简单手势输出（减少串台）
+                # When LSTM confidence rises but below threshold, suppress simple gesture output
             suppress_simple_keyboard = (
                 both_hands and has_lstm and lstm_prediction != "idle"
                 and lstm_confidence < LSTM_CONFIDENCE_THRESHOLD
@@ -336,8 +333,8 @@ def main():
             r_mouse_mode = ""  # "", "track", "click"
 
             if active_output == "SIMPLE":
-                # --- 移动键: 左右手规则一致，左手优先 ---
-                # 任一只手: 握拳正面→W 背面→S；指右→D 指左→A
+                # --- Move keys: same rule for both hands, left hand priority ---
+                # Either hand: fist palm→W back→S; point right→D point left→A
                 raw_key = None
                 if "Left" in simple_results:
                     gesture, palm_facing = simple_results["Left"][0], simple_results["Left"][1]
@@ -357,7 +354,7 @@ def main():
                     and len(frame_buffer) >= window_size // 2
                 )
                 if use_two_hands_delay:
-                    # 双手且缓冲过半：需连续 N 帧同一键才输出，减少复杂动作开头误触
+                    # Both hands + buffer half-full: require N consecutive same key to output
                     if raw_key == simple_stable_key:
                         simple_stable_count += 1
                     else:
@@ -385,7 +382,7 @@ def main():
                         keyboard.hold_key(new_key)
                     current_move_key = new_key
 
-                # --- 左手 pinch/pre_pinch → 鼠标（仅左手）---
+                # --- Left hand pinch/pre_pinch → mouse (left hand only) ---
                 suppress_pinch_for_lstm = (
                     both_hands and has_lstm
                     and lstm_confidence >= LSTM_PINCH_SUPPRESS_THRESHOLD
@@ -452,7 +449,7 @@ def main():
                     pinch_same_count = 0
                     pinch_smoothed_state = ""
 
-                # --- 右手: 张开/四指/比耶 + 向上挥 → Space ---
+                # --- Right hand: open/four/peace + swipe up → Space ---
                 if right_lms and "Right" in simple_results:
                     r_gesture = simple_results["Right"][0]
                     if r_gesture in ("open", "four", "peace"):
@@ -504,7 +501,7 @@ def main():
                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1)
             y_offset += 20
 
-            # 移动键
+            # Move key
             if current_move_key:
                 mk_text = f"Move: {current_move_key.upper()}"
                 mk_color = (0, 255, 0)
@@ -515,7 +512,7 @@ def main():
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, mk_color, 2)
             y_offset += 22
 
-            # 鼠标状态
+            # Mouse state
             if r_mouse_mode == "click":
                 cv2.putText(frame, "Mouse: CLICK", (10, y_offset),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
@@ -525,13 +522,13 @@ def main():
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 255), 2)
                 y_offset += 22
 
-            # 瞬发提示
+            # Tap hint
             if now - triggered_time < 1.0:
                 cv2.putText(frame, triggered_display, (10, y_offset),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
                 y_offset += 24
 
-            # 简单手势区
+            # Simple gesture area
             if active_output == "SIMPLE":
                 cv2.putText(frame, "-- Simple --", (10, y_offset),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.42, (200, 200, 0), 1)
@@ -540,7 +537,7 @@ def main():
                 for hand_type in ("Left", "Right"):
                     if hand_type in simple_results:
                         gesture, palm_facing = simple_results[hand_type]
-                        # 仅对已指定键位的手势显示键位，其余显示 — 避免误以为有键
+                        # Show key tag only for assigned gestures; others show —
                         if gesture == "point_right":
                             tag = "D"
                         elif gesture == "point_left":
@@ -573,7 +570,7 @@ def main():
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2,
                             )
 
-            # LSTM 区
+            # LSTM area
             if has_lstm and both_hands:
                 y_offset += 5
 
@@ -634,7 +631,7 @@ def main():
         keyboard.close()
         cap.release()
         cv2.destroyAllWindows()
-        print("已退出")
+        print("Exited")
 
 
 if __name__ == "__main__":

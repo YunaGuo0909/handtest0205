@@ -1,10 +1,8 @@
-# 手势训练脚本
-# 从 gesture_data.csv 读取关键点序列，训练 LSTM 分类模型
-#
-# 用法:
-#   python train_gesture.py                        # 默认参数训练
-#   python train_gesture.py --epochs 100           # 自定义轮数
-#   python train_gesture.py --window 20 --stride 5 # 自定义窗口
+# Train LSTM classifier for complex gestures from gesture_data.csv landmark sequences.
+# Usage:
+#   python train_gesture.py
+#   python train_gesture.py --epochs 100
+#   python train_gesture.py --window 20 --stride 5
 
 import argparse
 import csv
@@ -17,27 +15,27 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 
-# ========== 默认超参数 ==========
+# ========== Default hyperparameters ==========
 
 DEFAULTS = {
     "csv": "gesture_data.csv",
-    "window": 30,       # 滑动窗口帧数（30帧≈1秒@30fps）
-    "stride": 5,        # 滑动步长
+    "window": 30,       # sliding window frames (~1s @30fps)
+    "stride": 5,
     "batch_size": 32,
     "epochs": 80,
     "lr": 0.001,
-    "hidden": 128,      # LSTM 隐藏层维度
-    "layers": 2,        # LSTM 层数
+    "hidden": 128,
+    "layers": 2,
     "dropout": 0.3,
-    "test_ratio": 0.2,  # 测试集比例
+    "test_ratio": 0.2,
     "model_out": "gesture_model.pt",
 }
 
-POSITION_DIM = 126  # 左手63 + 右手63
-INPUT_DIM = POSITION_DIM * 2  # 位置(126) + 速度(126) = 252
+POSITION_DIM = 126  # left 63 + right 63
+INPUT_DIM = POSITION_DIM * 2  # position + velocity = 252
 
 
-# ========== 数据集 ==========
+# ========== Dataset ==========
 
 class GestureDataset(Dataset):
     def __init__(self, windows, labels):
@@ -52,7 +50,7 @@ class GestureDataset(Dataset):
 
 
 def load_csv(csv_path):
-    """加载 CSV，按 (source, label) 分组保持时序"""
+    """Load CSV; group by (source, label) to preserve sequence order."""
     sequences = defaultdict(list)
     with open(csv_path, "r", encoding="utf-8") as f:
         reader = csv.reader(f)
@@ -60,13 +58,13 @@ def load_csv(csv_path):
         for row in reader:
             label = row[0]
             source = row[1]
-            coords = [float(x) for x in row[3:]]  # 跳过 label, source, frame_idx
+            coords = [float(x) for x in row[3:]]  # skip label, source, frame_idx
             sequences[(source, label)].append(coords)
     return sequences
 
 
 def normalize_coords(frames):
-    """对一个窗口的坐标做归一化：以左手腕为原点，按手掌尺度缩放"""
+    """Normalize window coords: wrist as origin, scale by hand size."""
     frames = np.array(frames, dtype=np.float32)
     for i in range(len(frames)):
         frame = frames[i]
@@ -75,7 +73,7 @@ def normalize_coords(frames):
         right_x = frame[63:84]
         right_y = frame[84:105]
 
-        # 找一个有效的手作为参考点
+        # Use one visible hand as reference
         lw_x, lw_y = left_x[0], left_y[0]
         rw_x, rw_y = right_x[0], right_y[0]
 
@@ -89,7 +87,7 @@ def normalize_coords(frames):
         else:
             continue
 
-        # 平移：以参考手腕为原点
+        # Translate: reference wrist as origin
         if has_left:
             frame[0:21] = left_x - ref_x
             frame[21:42] = left_y - ref_y
@@ -97,7 +95,7 @@ def normalize_coords(frames):
             frame[63:84] = right_x - ref_x
             frame[84:105] = right_y - ref_y
 
-        # 缩放：用左手中指根到手腕距离（如果有左手）
+        # Scale by middle MCP to wrist distance
         if has_left:
             scale = np.sqrt((left_x[9] - lw_x)**2 + (left_y[9] - lw_y)**2)
         elif has_right:
@@ -115,14 +113,11 @@ def normalize_coords(frames):
 
 
 def add_velocity_features(frames):
-    """在位置特征后追加帧间速度（一阶差分）。
+    """Append frame-to-frame velocity (first-order diff) to position features.
 
-    帮助区分"整手平移"和"关节弯曲"：
-    - 整手平移：所有关键点速度大且方向一致
-    - 关节弯曲：手腕速度小，指尖速度有角度差异
-
-    Input:  (window_size, 126) 归一化位置
-    Output: (window_size, 252) 位置 + 速度
+    Helps distinguish whole-hand motion vs joint motion.
+    Input: (window_size, 126) normalized position
+    Output: (window_size, 252) position + velocity
     """
     frames = np.array(frames, dtype=np.float32)
     velocity = np.zeros_like(frames)
@@ -131,11 +126,11 @@ def add_velocity_features(frames):
 
 
 def build_windows(sequences, window_size, stride, label_map, augment=True):
-    """从按视频分组的序列中构建滑动窗口样本"""
+    """Build sliding-window samples from per-video sequences."""
     windows = []
     labels = []
 
-    print(f"\n标签映射: {label_map}")
+    print(f"\nLabel map: {label_map}")
 
     for (source, label), frames in sequences.items():
         if len(frames) < window_size:
@@ -163,17 +158,13 @@ def build_windows(sequences, window_size, stride, label_map, augment=True):
 
 
 def build_label_map(sequences):
-    """从所有数据中构建统一的标签映射"""
+    """Build unified label map from all data."""
     label_set = sorted(set(label for _, label in sequences.keys()))
     return {name: i for i, name in enumerate(label_set)}
 
 
 def split_by_source(sequences, test_ratio):
-    """按视频源分割训练/测试集
-
-    对于只有 1 个来源的类别（如摄像头录制的 idle），
-    按帧数比例拆分而非按来源拆分。
-    """
+    """Split train/test by video source. Single-source labels split by frame ratio."""
     sources_by_label = defaultdict(list)
     for (source, label) in sequences.keys():
         sources_by_label[label].append(source)
@@ -186,7 +177,7 @@ def split_by_source(sequences, test_ratio):
         random.shuffle(sources)
 
         if len(sources) <= 1:
-            # 只有 1 个来源：按帧比例拆分（前 80% 训练，后 20% 测试）
+            # Single source: split by frame ratio (80% train, 20% test)
             for (src, lbl), frames in sequences.items():
                 if lbl != label:
                     continue
@@ -210,7 +201,7 @@ def split_by_source(sequences, test_ratio):
     return train_seqs, test_seqs
 
 
-# ========== 模型 ==========
+# ========== Model ==========
 
 class GestureLSTM(nn.Module):
     def __init__(self, input_dim, hidden_dim, num_layers, num_classes, dropout=0.3):
@@ -227,12 +218,12 @@ class GestureLSTM(nn.Module):
     def forward(self, x):
         # x: (batch, seq_len, input_dim)
         lstm_out, (h_n, _) = self.lstm(x)
-        last_hidden = h_n[-1]  # 取最后一层的隐藏状态
+        last_hidden = h_n[-1]  # last layer hidden state
         out = self.dropout(last_hidden)
         return self.fc(out)
 
 
-# ========== 训练 ==========
+# ========== Training ==========
 
 def train_epoch(model, loader, criterion, optimizer, device):
     model.train()
@@ -281,7 +272,7 @@ def evaluate(model, loader, criterion, device):
 
 
 def print_confusion_matrix(preds, labels, label_names):
-    """打印混淆矩阵"""
+    """Print confusion matrix."""
     n = len(label_names)
     matrix = [[0] * n for _ in range(n)]
     for true, pred in zip(labels, preds):
@@ -308,7 +299,7 @@ def print_confusion_matrix(preds, labels, label_names):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="手势 LSTM 训练")
+    parser = argparse.ArgumentParser(description="Gesture LSTM training")
     parser.add_argument("--csv", default=DEFAULTS["csv"])
     parser.add_argument("--window", type=int, default=DEFAULTS["window"])
     parser.add_argument("--stride", type=int, default=DEFAULTS["stride"])
@@ -323,29 +314,29 @@ def main():
     args = parser.parse_args()
 
     if not os.path.exists(args.csv):
-        print(f"错误: {args.csv} 不存在，请先运行 collect_data.py")
+        print(f"Error: {args.csv} not found. Run collect_data.py first.")
         return
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"设备: {device}")
+    print(f"Device: {device}")
 
-    # 1. 加载数据
-    print(f"\n加载数据: {args.csv}")
+    # 1. Load data
+    print(f"\nLoading: {args.csv}")
     sequences = load_csv(args.csv)
-    print(f"视频片段数: {len(sequences)}")
+    print(f"Video segments: {len(sequences)}")
 
     total_frames = sum(len(f) for f in sequences.values())
-    print(f"总帧数: {total_frames}")
+    print(f"Total frames: {total_frames}")
 
-    # 2. 构建统一标签映射
+    # 2. Build label map
     label_map = build_label_map(sequences)
 
-    # 3. 按视频源分割
+    # 3. Split by source
     train_seqs, test_seqs = split_by_source(sequences, args.test_ratio)
-    print(f"训练集视频: {len(train_seqs)}, 测试集视频: {len(test_seqs)}")
+    print(f"Train segments: {len(train_seqs)}, test segments: {len(test_seqs)}")
 
-    # 4. 构建滑动窗口
-    print(f"窗口大小: {args.window}帧, 步长: {args.stride}帧")
+    # 4. Build sliding windows
+    print(f"Window: {args.window} frames, stride: {args.stride}")
     train_windows, train_labels = build_windows(
         train_seqs, args.window, args.stride, label_map, augment=True
     )
@@ -356,11 +347,11 @@ def main():
     num_classes = len(label_map)
     label_names = [k for k, v in sorted(label_map.items(), key=lambda x: x[1])]
 
-    print(f"训练样本: {len(train_labels)}, 测试样本: {len(test_labels)}")
-    print(f"类别数: {num_classes}, 标签: {label_names}")
+    print(f"Train samples: {len(train_labels)}, test samples: {len(test_labels)}")
+    print(f"Classes: {num_classes}, labels: {label_names}")
 
-    # 类别分布
-    print("\n训练集类别分布:")
+    # Class distribution
+    print("\nTrain set class distribution:")
     for name in label_names:
         idx = label_map[name]
         count = (train_labels == idx).sum()
@@ -372,11 +363,11 @@ def main():
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
     test_loader = DataLoader(test_ds, batch_size=args.batch_size)
 
-    # 5. 模型
+    # 5. Model
     model = GestureLSTM(
         INPUT_DIM, args.hidden, args.layers, num_classes, args.dropout
     ).to(device)
-    print(f"\n模型参数量: {sum(p.numel() for p in model.parameters()):,}")
+    print(f"\nParameters: {sum(p.numel() for p in model.parameters()):,}")
 
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
@@ -384,9 +375,9 @@ def main():
         optimizer, mode="min", factor=0.5, patience=10
     )
 
-    # 6. 训练
+    # 6. Train
     print(f"\n{'='*60}")
-    print(f"开始训练 ({args.epochs} epochs)")
+    print(f"Training ({args.epochs} epochs)")
     print(f"{'='*60}")
 
     best_acc = 0
@@ -418,17 +409,17 @@ def main():
                   f"LR: {lr_now:.6f}"
                   f"{' ★' if epoch == best_epoch else ''}")
 
-    # 7. 最终评估
+    # 7. Final eval
     print(f"\n{'='*60}")
-    print(f"训练完成! 最佳测试准确率: {best_acc:.1%} (Epoch {best_epoch})")
-    print(f"模型保存至: {args.model_out}")
+    print(f"Done. Best test accuracy: {best_acc:.1%} (Epoch {best_epoch})")
+    print(f"Model saved to: {args.model_out}")
     print(f"{'='*60}")
 
     checkpoint = torch.load(args.model_out, weights_only=True)
     model.load_state_dict(checkpoint["model_state"])
     _, final_acc, preds, labels = evaluate(model, test_loader, criterion, device)
 
-    print(f"\n最终测试准确率: {final_acc:.1%}")
+    print(f"\nFinal test accuracy: {final_acc:.1%}")
     print_confusion_matrix(preds, labels, label_names)
 
 

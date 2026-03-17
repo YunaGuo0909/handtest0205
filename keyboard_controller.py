@@ -1,18 +1,17 @@
-# 键盘控制模块
-# 根据手势指令模拟键盘按键，直接驱动 UE 角色
+# Keyboard controller: simulate key presses from gesture commands (e.g. for UE/games).
 
 from pynput.keyboard import Controller, Key, KeyCode
 import time
 import sys
 
-# Windows 虚拟键码，确保 W/S 在记事本等窗口能打出字（部分环境用字符会失效）
+# Windows virtual key codes; W/S sent via keybd_event for reliability in Notepad etc.
 VK_W = 0x57
 VK_S = 0x53
 KEYEVENTF_KEYUP = 0x0002
 
 
 def _keybd_event(vk, key_up=False):
-    """Windows keybd_event，仅用于 W/S 在部分环境更可靠"""
+    """Windows keybd_event; used for W/S when pynput character input is unreliable."""
     if sys.platform != "win32":
         return
     try:
@@ -23,10 +22,10 @@ def _keybd_event(vk, key_up=False):
 
 
 class KeyboardController:
-    """键盘模拟器 - 将手势指令转换为键盘按键
+    """Simulate keyboard from gesture commands.
 
-    连续按键（移动）: 手势保持期间持续按住，手势消失时松开
-    瞬发按键（技能）: 按一下立即松开
+    Hold (move): press and hold while gesture is active, release when it ends.
+    Tap (action): press once and release.
     """
 
     def __init__(self):
@@ -34,7 +33,7 @@ class KeyboardController:
         self._held_keys = set()
 
     def _key_obj(self, key_char):
-        """W/S 用虚拟键码，供 pynput 使用"""
+        """W/S as VK KeyCode for pynput."""
         if key_char == "w":
             return KeyCode.from_vk(VK_W)
         if key_char == "s":
@@ -42,11 +41,11 @@ class KeyboardController:
         return key_char
 
     def _use_win_keybd(self, key_char):
-        """是否用 Windows keybd_event 发送（W/S 在记事本等更可靠）"""
+        """Whether to send via Windows keybd_event (W/S more reliable in Notepad etc.)."""
         return key_char in ("w", "s")
 
     def hold_key(self, key_char):
-        """按住一个键（连续动作用）"""
+        """Hold a key (for continuous move)."""
         if key_char not in self._held_keys:
             self._release_all_movement()
             if self._use_win_keybd(key_char):
@@ -57,7 +56,7 @@ class KeyboardController:
             self._held_keys.add(key_char)
 
     def tap_key(self, key_char):
-        """按一下键（瞬发动作用）"""
+        """Tap a key once (for instant action)."""
         if key_char == "shift":
             self.kb.press(Key.shift)
             self.kb.release(Key.shift)
@@ -74,7 +73,7 @@ class KeyboardController:
             self.kb.release(k)
 
     def release_key(self, key_char):
-        """松开一个键"""
+        """Release a key."""
         if key_char in self._held_keys:
             if self._use_win_keybd(key_char):
                 vk = VK_W if key_char == "w" else VK_S
@@ -84,7 +83,7 @@ class KeyboardController:
             self._held_keys.discard(key_char)
 
     def _release_all_movement(self):
-        """松开所有被按住的移动键"""
+        """Release all held movement keys."""
         for key_char in list(self._held_keys):
             if self._use_win_keybd(key_char):
                 vk = VK_W if key_char == "w" else VK_S
@@ -94,9 +93,9 @@ class KeyboardController:
         self._held_keys.clear()
 
     def stop(self):
-        """停止所有输入"""
+        """Stop all input."""
         self._release_all_movement()
 
     def close(self):
-        """清理：松开所有键"""
+        """Cleanup: release all keys."""
         self._release_all_movement()

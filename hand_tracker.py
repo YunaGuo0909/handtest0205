@@ -1,5 +1,4 @@
-# 手部追踪模块
-# 使用 MediaPipe HandLandmarker 检测手部关键点并绘制骨架
+# Hand tracking: MediaPipe HandLandmarker for landmarks and skeleton drawing.
 
 import cv2
 import mediapipe as mp
@@ -21,13 +20,12 @@ from config import (
 
 
 class HandTracker:
-    """手部追踪器 - 检测手部关键点并绘制骨架
+    """Hand tracker: detect landmarks and draw skeleton via MediaPipe HandLandmarker.
 
-    职责:
-        - 自动下载/加载 MediaPipe 模型
-        - 从图像帧中检测手部关键点
-        - 在图像上绘制骨架和关键点
-        - 格式化关键点数据供输出
+    - Download/load MediaPipe model
+    - Detect hand landmarks from image frames
+    - Draw skeleton and landmarks on image
+    - Format landmark data for output
     """
 
     def __init__(self):
@@ -35,14 +33,14 @@ class HandTracker:
         self._init_detector()
 
     def _ensure_model(self):
-        """确保模型文件存在，不存在则下载"""
+        """Ensure model file exists; download if missing."""
         if not os.path.exists(MODEL_PATH):
-            print("下载手部模型中...")
+            print("Downloading hand model...")
             urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
-            print("模型下载完成")
+            print("Hand model ready")
 
     def _init_detector(self):
-        """初始化 MediaPipe 手部检测器"""
+        """Initialize MediaPipe hand detector."""
         base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
         options = vision.HandLandmarkerOptions(
             base_options=base_options,
@@ -55,15 +53,13 @@ class HandTracker:
         self.detector = vision.HandLandmarker.create_from_options(options)
 
     def detect(self, frame):
-        """检测手部关键点
+        """Detect hand landmarks.
 
         Args:
-            frame: BGR格式的图像帧
+            frame: BGR image frame
 
         Returns:
-            HandLandmarkerResult: MediaPipe检测结果，包含:
-                - hand_landmarks: 各手的21个关键点
-                - handedness: 各手的左右手信息
+            HandLandmarkerResult: hand_landmarks (21 per hand), handedness
         """
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
@@ -71,7 +67,7 @@ class HandTracker:
 
     @staticmethod
     def get_finger_color(landmark_index):
-        """根据关键点索引获取对应手指颜色"""
+        """Return finger color for landmark index."""
         if landmark_index <= 4:
             return FINGER_COLORS[0]
         elif landmark_index <= 8:
@@ -84,21 +80,14 @@ class HandTracker:
 
     @classmethod
     def draw_hand(cls, frame, landmarks, w, h):
-        """在图像上绘制手部骨架
-
-        Args:
-            frame: 图像帧
-            landmarks: 手部关键点列表
-            w: 图像宽度
-            h: 图像高度
-        """
-        # 画骨架连线
+        """Draw hand skeleton on image. frame: image; landmarks: list; w,h: width, height."""
+        # Draw bone lines
         for a, b in BONE_CONNECTIONS:
             p1 = (int(landmarks[a].x * w), int(landmarks[a].y * h))
             p2 = (int(landmarks[b].x * w), int(landmarks[b].y * h))
             cv2.line(frame, p1, p2, cls.get_finger_color(a), 2)
 
-        # 画关键点（指尖用大圆，其他用小圆）
+        # Draw landmarks (larger circles for fingertips)
         for i, lm in enumerate(landmarks):
             x, y = int(lm.x * w), int(lm.y * h)
             r = 8 if i in [4, 8, 12, 16, 20] else 5
@@ -106,14 +95,7 @@ class HandTracker:
 
     @staticmethod
     def format_landmarks(landmarks):
-        """将关键点格式化为字典列表
-
-        Args:
-            landmarks: 手部关键点
-
-        Returns:
-            list[dict]: 格式化后的关键点数据，每项包含 id, name, x, y, z
-        """
+        """Format landmarks to list of dicts with id, name, x, y, z."""
         return [
             {
                 "id": i,

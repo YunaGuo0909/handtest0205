@@ -1,20 +1,16 @@
-# 手势识别模块
-# 基于手部关键点的几何关系，判断当前手势类型和手掌朝向
+# Gesture recognizer: rule-based classification from hand landmarks (geometry).
+# Palm facing: palm_facing=True -> palm toward camera, False -> back of hand.
 
 import math
 
 
 class GestureRecognizer:
-    """手势识别器
+    """Rule-based gesture recognizer from hand landmarks.
 
-    支持的手势:
-        fist, open, thumb_up, thumb_down, peace, ok,
-        point_right/left/up/down, pointing, rock, call,
-        three, four, pinch
+    Gestures: fist, open, thumb_up, thumb_down, peace, ok,
+    point_right/left/up/down, pointing, rock, call, three, four, pinch, pre_pinch.
 
-    手掌朝向:
-        palm_facing=True  → 手心朝镜头
-        palm_facing=False → 手背朝镜头
+    Palm: palm_facing=True -> palm toward camera, False -> back of hand.
     """
 
     GESTURES = [
@@ -28,7 +24,7 @@ class GestureRecognizer:
     FINGER_MCPS = {"thumb": 2, "index": 5, "middle": 9, "ring": 13, "pinky": 17}
 
     # ------------------------------------------------------------------
-    # 基础工具
+    # Helpers
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -36,12 +32,12 @@ class GestureRecognizer:
         return math.sqrt((p1.x - p2.x) ** 2 + (p1.y - p2.y) ** 2)
 
     # ------------------------------------------------------------------
-    # 通用手指伸直检测（3D PIP 角度 + y-axis 兜底）
+    # Finger extension (3D PIP angle + y-axis fallback)
     # ------------------------------------------------------------------
 
     @classmethod
     def _is_finger_extended(cls, landmarks, finger):
-        """3D PIP 关节角度判断伸直（含深度方向弯曲检测）"""
+        """Extended = 3D PIP angle (includes depth-direction curl)."""
         tip = landmarks[cls.FINGER_TIPS[finger]]
         pip_j = landmarks[cls.FINGER_PIPS[finger]]
         mcp = landmarks[cls.FINGER_MCPS[finger]]
@@ -50,7 +46,7 @@ class GestureRecognizer:
         if finger == "thumb":
             return abs(tip.x - wrist.x) > abs(mcp.x - wrist.x)
 
-        # 3D PIP 角度（含 z 深度，能检测深度方向弯曲）
+        # 3D PIP angle (includes z for depth curl)
         v1 = (mcp.x - pip_j.x, mcp.y - pip_j.y, mcp.z - pip_j.z)
         v2 = (tip.x - pip_j.x, tip.y - pip_j.y, tip.z - pip_j.z)
         dot = v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2]
@@ -62,24 +58,23 @@ class GestureRecognizer:
             if cos_a < -0.5:
                 return True
 
-        # y-axis 兜底（手指明确朝上，且纵跨度足够大才触发）
+        # y-axis fallback: finger clearly up and span large enough
         if tip.y < pip_j.y < mcp.y and (mcp.y - tip.y) > 0.06:
             return True
 
         return False
 
     # ------------------------------------------------------------------
-    # 独立检测器：捏合（pinch）— 不依赖通用手指检测
+    # Pinch detector (independent of generic finger logic)
     # ------------------------------------------------------------------
 
     @classmethod
     def _pinch_geometry(cls, landmarks, min_dist, max_dist, others_mult=1.1):
-        """检查拇指+食指是否处于捏合/预捏合几何形态。
+        """Check thumb+index in pinch/pre-pinch geometry.
 
-        条件：
-        1. 拇指-食指距离在 [min_dist, max_dist) 范围内
-        2. 捏合中点离手腕足够远（排除握拳）
-        3. 其余手指 tip 不超过中点距离 × others_mult（排除 OK/张开）
+        1. Thumb-index distance in [min_dist, max_dist)
+        2. Pinch midpoint far enough from wrist (exclude fist)
+        3. Other finger tips not beyond midpoint * others_mult (exclude OK/open)
         """
         thumb_tip = landmarks[4]
         index_tip = landmarks[8]
@@ -108,7 +103,7 @@ class GestureRecognizer:
 
     @classmethod
     def _detect_pinch(cls, landmarks, hand_type="Right"):
-        """捏合：仅右手，拇指+食指指尖靠近且食指伸出、中指握着，排除背面握拳。"""
+        """Pinch: left hand only; thumb+index tips close, index extended, middle curled."""
         if hand_type != "Left":
             return False
         if not cls._pinch_geometry(landmarks, 0.0, 0.08, others_mult=1.1):
@@ -133,11 +128,7 @@ class GestureRecognizer:
 
     @classmethod
     def _detect_pre_pinch(cls, landmarks, hand_type="Right"):
-        """预捏合：仅右手，拇指+食指伸出、其余握着，且食指与中指明显分开。
-
-        约束：拇指-食指 0.08~0.18；捏合点伸出掌外；食指与中指指尖距离 > 0.12；
-        食指明显比中指伸得远（食指伸出、中指握着），避免握拳被误判。
-        """
+        """Pre-pinch: left hand only; thumb+index extended, others curled; index and middle well apart."""
         if hand_type != "Left":
             return False
         if not cls._pinch_geometry(landmarks, 0.08, 0.18, others_mult=1.2):
@@ -161,17 +152,13 @@ class GestureRecognizer:
         return True
 
     # ------------------------------------------------------------------
-    # 独立检测器：指向（pointing）— 不依赖通用手指检测
+    # Pointing detector (independent of generic finger logic)
     # ------------------------------------------------------------------
 
     @classmethod
     def _detect_pointing(cls, landmarks):
-        """食指在 3D 空间中"唯一地"远离手腕（≥1.3× 其余手指）。
-
-        用 3D 距离（含深度 z），即使弯曲发生在深度方向也能正确排除。
-        当拇指正在靠近食指（预捏合状态）时抑制指向判定。
-        """
-        # 拇指靠近食指时抑制（预捏合 dead zone）
+        """Index uniquely far from wrist in 3D (>= 1.3x other fingers). Suppress when thumb near index (pre-pinch)."""
+        # Dead zone when thumb near index (pre-pinch)
         thumb_index = math.sqrt(
             (landmarks[4].x - landmarks[8].x) ** 2
             + (landmarks[4].y - landmarks[8].y) ** 2
@@ -197,12 +184,12 @@ class GestureRecognizer:
         return None
 
     # ------------------------------------------------------------------
-    # 指向方向
+    # Pointing direction
     # ------------------------------------------------------------------
 
     @classmethod
     def _get_pointing_direction(cls, landmarks):
-        """食指 tip→mcp 向量角度 → right/left/up/down"""
+        """Index tip->mcp vector angle -> right/left/up/down."""
         index_mcp = landmarks[5]
         index_tip = landmarks[8]
         dx = index_tip.x - index_mcp.x
@@ -219,7 +206,7 @@ class GestureRecognizer:
         return None
 
     # ------------------------------------------------------------------
-    # 手掌朝向
+    # Palm facing
     # ------------------------------------------------------------------
 
     @classmethod
@@ -235,7 +222,7 @@ class GestureRecognizer:
         return cross_z > 0 if hand_type == "Right" else cross_z < 0
 
     # ------------------------------------------------------------------
-    # 主入口
+    # Main entry
     # ------------------------------------------------------------------
 
     @classmethod
@@ -245,7 +232,7 @@ class GestureRecognizer:
 
         palm_facing = cls._is_palm_facing_camera(landmarks, hand_type)
 
-        # ========== 独立检测器（优先级最高，不走通用逻辑）==========
+        # ========== Dedicated detectors (highest priority) ==========
 
         if cls._detect_pinch(landmarks, hand_type):
             return "pinch", 0.85, palm_facing
@@ -257,7 +244,7 @@ class GestureRecognizer:
         if direction:
             return f"point_{direction}", 0.85, palm_facing
 
-        # ========== 通用手指伸直检测 ==========
+        # ========== Generic finger extension ==========
 
         thumb = cls._is_finger_extended(landmarks, "thumb")
         index = cls._is_finger_extended(landmarks, "index")
@@ -270,7 +257,7 @@ class GestureRecognizer:
 
         if extended_count == 0:
             return "fist", confidence, palm_facing
-        # 只伸一根且不是拇指/食指时视为松握拳，便于 W/S 触发
+        # Single extended finger (not thumb/index) -> loose fist for W/S
         if extended_count == 1 and not thumb and not index:
             return "fist", 0.75, palm_facing
 
@@ -297,7 +284,7 @@ class GestureRecognizer:
             elif extended_count == 4 and not thumb:
                 return "four", confidence, palm_facing
 
-        # 通用指向兜底（通过逐指检测走到这里）
+        # Generic pointing fallback
         if not thumb and index and not middle and not ring and not pinky:
             dir2 = cls._get_pointing_direction(landmarks)
             gesture_name = f"point_{dir2}" if dir2 else "pointing"

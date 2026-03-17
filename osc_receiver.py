@@ -1,5 +1,4 @@
-# OSC 接收测试 - 模拟 UE 接收 OSC 消息
-# 运行: python osc_receiver.py
+# OSC receiver test - simulate UE receiving OSC. Run: python osc_receiver.py
 
 from config import OSC_IP, OSC_PORT
 from osc_utils import OSCReceiver
