@@ -2,25 +2,22 @@
 __pycache__/
 *.pyc
 .venv/
+.env
+.python-version
 
-# 模型文件（太大，不入库）
+# 模型与数据（体积大或可本地生成，不入库）
 hand_landmarker.task
-yolov8n.pt
 *.task
 *.pt
-
-# 数据文件
+gesture_data.csv
 hand_data.json
+training_videos/
+
+# 其它
 *.json
 !pyproject.toml
-gesture_data.csv
-
-# 训练视频（太大，不入库）
-training_videos/
+uv.lock
 
 # IDE
 .vscode/
 .idea/
-
-# uv
-uv.lock

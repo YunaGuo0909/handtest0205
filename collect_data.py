@@ -291,12 +291,15 @@ def main():
                         help="视频不做水平镜像（后置摄像头录的视频用这个）")
     parser.add_argument("--preview", action="store_true",
                         help="批量处理时弹窗预览检测效果")
+    parser.add_argument("--overwrite", action="store_true",
+                        help="视频模式下覆盖已有 CSV，用当前文件夹内全部视频重新生成（新增视频后重训时用）")
     args = parser.parse_args()
 
     if not args.videos and not args.camera:
         parser.print_help()
         print("\n示例:")
         print("  python collect_data.py --videos training_videos/")
+        print("  python collect_data.py --videos training_videos/ --overwrite   # 新增视频后重训：覆盖 CSV 再采集")
         print("  python collect_data.py --videos training_videos/ --no-flip")
         print("  python collect_data.py --videos training_videos/ --preview")
         print("  python collect_data.py --camera")
@@ -306,14 +309,20 @@ def main():
     tracker = HandTracker()
 
     file_exists = os.path.exists(args.output) and os.path.getsize(args.output) > 0
-    csvfile = open(args.output, "a", newline="", encoding="utf-8")
-    writer = csv.writer(csvfile)
-
-    if not file_exists:
+    overwrite = getattr(args, "overwrite", False) and args.videos
+    if overwrite and file_exists:
+        csvfile = open(args.output, "w", newline="", encoding="utf-8")
+        writer = csv.writer(csvfile)
         writer.writerow(CSV_HEADER)
-        print(f"创建新数据文件: {args.output}")
+        print(f"覆盖并重新生成: {args.output}（当前 training_videos 下全部视频）")
     else:
-        print(f"追加到已有数据文件: {args.output}")
+        csvfile = open(args.output, "a", newline="", encoding="utf-8")
+        writer = csv.writer(csvfile)
+        if not file_exists:
+            writer.writerow(CSV_HEADER)
+            print(f"创建新数据文件: {args.output}")
+        else:
+            print(f"追加到已有数据文件: {args.output}")
 
     stats = {}
     do_flip = not args.no_flip

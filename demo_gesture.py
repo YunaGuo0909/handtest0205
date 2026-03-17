@@ -68,13 +68,13 @@ MOVE_KEYS = {
 }
 
 EXERCISE_KEYS = {
-    "1": "1",
+    "1": "t",        # leftright → T
     "2": "2",
     "3": "3",
     "4": "4",
     "5": "space",    # 抓手指 → Space
-    "6": "6",
-    "7": "7",
+    "6": "e",        # 掌根互拍 zhanggenhupai → E
+    "7": "q",        # 虎口互击 hukouhuji → Q
 }
 
 SWIPE_UP_KEY = "space"
