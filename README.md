@@ -66,14 +66,3 @@ To use complex gesture recognition, collect data and train the LSTM (or use an e
    ```
    This produces `gesture_model.pt`. Run `demo_gesture.py` again to use complex gestures.
 
-## Project layout (what goes to Git)
-
-- `demo_gesture.py` — Main app (recognition + keyboard/mouse)
-- `hand_tracker.py` — Hand tracking (MediaPipe)
-- `gesture_recognizer.py` — Simple gesture rules
-- `train_gesture.py` — LSTM training for complex gestures
-- `collect_data.py` — Extract landmarks from videos
-- `keyboard_controller.py` / `config.py` — Keyboard and config
-- `requirements.txt` / `README.md`
-
-Not committed (in `.gitignore`): training videos, `gesture_data.csv`, `gesture_model.pt`, hand model files, `__pycache__`, etc.
