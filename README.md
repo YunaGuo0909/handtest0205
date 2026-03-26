@@ -1,90 +1,121 @@
-# Gesture Recognition + Keyboard/Mouse Control
+# Real-Time Hand Gesture Recognition for Game Control
 
-Hand landmark detection via MediaPipe with **simple gestures** (rule-based) and **complex gestures** (LSTM). Maps to keyboard and mouse for games or accessibility.
+A webcam-based hand gesture recognition system that maps hand poses and movements to keyboard/mouse input for controlling games — no additional hardware required.
+
+Uses a **dual recognition engine**: rule-based geometry classification for simple single-hand poses, and an LSTM neural network for complex two-hand temporal gestures. Game input is delivered via **Win32 virtual keyboard simulation** (keybd_event with hardware scan codes), making it game-agnostic with near-zero latency.
+
+**Author:** Yutong Guo
 
 ## Project Structure
 
 ```
-handtest0205/
-├── main.py                  # Entry point: camera loop, dual-engine dispatch
-├── demo_gesture.py          # Alternative demo with different tuning
+├── main.py                  # Entry point: camera loop, dual-engine state machine
 ├── hand_tracker.py          # MediaPipe HandLandmarker wrapper (detect + draw)
-├── gesture_recognizer.py    # Rule-based 14-gesture classifier (geometry)
+├── gesture_recognizer.py    # Rule-based 14-gesture classifier (3D joint geometry)
+├── keyboard_controller.py   # Win32 keybd_event virtual keyboard/mouse simulation
 ├── command_mapper.py        # Gesture → keyboard/mouse action mapping
-├── keyboard_controller.py   # Win32 keybd_event + scan code simulation
-├── config.py                # Global thresholds & parameters
+├── config.py                # Global parameters & thresholds
 ├── train_gesture.py         # LSTM model definition + training pipeline
-├── collect_data.py          # Gesture data collection (video / camera)
-├── hand_landmarker.task     # MediaPipe hand model (auto-download)
-├── gesture_model.pt         # Trained LSTM checkpoint
-├── gesture_data.csv         # Training data (landmarks per frame)
-├── training_videos/         # Raw video data organized by gesture label
-├── GestureControl.spec      # PyInstaller packaging config
+├── collect_data.py          # Training data collection (video batch / live camera)
+├── demo_gesture.py          # Alternative demo entry point with different tuning
+├── GestureControl.spec      # PyInstaller config for standalone .exe packaging
 ├── pyproject.toml           # Project metadata & dependencies
 └── requirements.txt         # pip dependencies
 ```
 
+**Not tracked in git** (generated locally):
+
+```
+├── hand_landmarker.task     # MediaPipe model (auto-downloaded on first run)
+├── gesture_model.pt         # Trained LSTM checkpoint
+├── gesture_data.csv         # Training data CSV
+├── training_videos/         # Raw training video clips by gesture label
+├── build/                   # PyInstaller build artifacts
+└── dist/                    # Packaged standalone executable
+```
+
 ## Requirements
 
-- Python 3.8+
-- Webcam (built-in or external)
+- Python 3.12+
+- Windows (virtual keyboard uses Win32 API)
+- Webcam
 
-## Install
+## Install & Run
 
 ```bash
 pip install -r requirements.txt
+python main.py
 ```
 
-On first run, the MediaPipe hand model (~10MB) is downloaded automatically.
+The MediaPipe hand model (~10 MB) is downloaded automatically on first run. Press **ESC** to quit.
 
-## Run (clone and use)
+- **Without `gesture_model.pt`**: Simple gestures only (movement + mouse control).
+- **With `gesture_model.pt`**: Complex two-hand exercise gestures are also enabled.
 
-```bash
-python demo_gesture.py
-```
+## How It Works
 
-- **Without `gesture_model.pt`**: Only simple gestures (move, point, fist, pinch mouse, etc.). The program will report "simple gestures only".
-- **With `gesture_model.pt`**: Complex gestures (hand exercises) are also enabled. Key bindings are listed below.
+### Dual-Engine State Machine
 
-Press **Q** to quit.
+| State | Condition | Engine |
+|-------|-----------|--------|
+| `SIMPLE` | One hand detected | Rule-based geometry classifier |
+| `WAIT_LSTM` | Both hands, LSTM buffer filling | Simple gestures suppressed |
+| `LSTM` | Both hands, confident prediction | LSTM complex gesture classifier |
 
-## Key bindings (current)
+### Key Bindings
 
-| Hand / type | Gesture | Key / effect |
-|-------------|---------|--------------|
-| Left | Point right / point left | D / A |
-| Left | Fist (palm / back) | W / S |
-| Left | pre_pinch / pinch | Mouse move / left click |
-| Right | Palm up + swipe up | Space |
-| Complex (1) | leftright | T |
-| Complex (5) | Grab fingers | Space |
-| Complex (6) | Palm-heel clap | E |
-| Complex (7) | Thumb-webbing tap | Q |
-| Complex (2,3,4) | Other exercises | 2 / 3 / 4 |
+**Simple gestures (single hand):**
 
-## Optional: train complex gestures
+| Hand | Gesture | Output |
+|------|---------|--------|
+| Left | Point right / left | D / A (hold) |
+| Left | Fist (palm facing / back) | W / S (hold) |
+| Left | Pre-pinch / pinch | Mouse move / left click |
+| Right | Repeated open-fist (grab ×2) | Space (tap) |
+| Both | Open palms still 3s | P (tap) |
 
-To use complex gesture recognition, collect data and train the LSTM (or use an existing `gesture_model.pt`).
+**Complex gestures (LSTM, both hands):**
 
-1. **Organize videos** by action in subfolders, e.g.:
+| ID | Exercise | Key |
+|----|----------|-----|
+| 1 | Left-right swing | F |
+| 5 | Finger grabbing | Space |
+| 6 | Palm-heel clap | E |
+| 7 | Tiger-mouth strike | T |
+
+### Anti-Flicker Mechanisms
+
+- Pinch state smoothing (4-frame hysteresis)
+- Movement key debounce (5-frame unanimous vote)
+- LSTM confidence voting (6-frame sliding window, per-class thresholds)
+- LSTM-pinch mutual exclusion during two-hand gestures
+
+## Train Complex Gestures (Optional)
+
+1. **Collect data** — organise videos in labelled subfolders:
    ```
    training_videos/
-   ├── 1/          # leftright
-   │   ├── p1_001.mp4
-   │   └── ...
-   ├── 2/
+   ├── 1/    # left-right swing
+   ├── 2/    # back-hand clap
    ├── ...
-   └── 7/
+   └── 7/    # tiger-mouth strike
    ```
 
-2. **Build CSV from videos** (overwrites existing `gesture_data.csv`):
+2. **Extract landmarks from videos:**
    ```bash
    python collect_data.py --videos training_videos/ --overwrite
    ```
 
-3. **Train the model**:
+3. **Train the LSTM:**
    ```bash
    python train_gesture.py
    ```
-   This produces `gesture_model.pt`. Run `demo_gesture.py` again to use complex gestures.
+   Produces `gesture_model.pt`. Restart `main.py` to enable complex gestures.
 
+## Standalone Executable
+
+```bash
+pyinstaller GestureControl.spec
+```
+
+Output: `dist/GestureControl/GestureControl.exe` — runs without Python installed.
