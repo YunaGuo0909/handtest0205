@@ -1,5 +1,14 @@
 # Global config
 
+import sys
+import os
+
+# ========== Base directory (supports PyInstaller) ==========
+if getattr(sys, 'frozen', False):
+    BASE_DIR = sys._MEIPASS
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # ========== Camera ==========
 CAMERA_ID = 0
 CAMERA_WIDTH = 640
@@ -11,8 +20,8 @@ ACTION_HAND = "Right"           # Right hand: tap actions
 
 # ========== Debounce ==========
 MOVE_STABLE_FRAMES = 5          # Move key debounce frames
-ACTION_COOLDOWN = 0.8           # Tap action cooldown (seconds)
-COMBO_COOLDOWN = 1.5            # Two-hand combo cooldown (seconds)
+ACTION_COOLDOWN = 2.0           # Tap action cooldown (seconds)
+COMBO_COOLDOWN = 2.0            # Two-hand combo cooldown (seconds)
 
 # ========== Motion ==========
 SWIPE_UP_THRESHOLD = 0.15       # Swipe up: y-delta threshold
@@ -22,7 +31,7 @@ POINTING_X_THRESHOLD = 0.04     # Pointing horizontal component (filter vertical
 
 # ========== MediaPipe model ==========
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
-MODEL_PATH = "hand_landmarker.task"
+MODEL_PATH = os.path.join(BASE_DIR, "hand_landmarker.task")
 
 # ========== Detection confidence ==========
 MIN_DETECTION_CONFIDENCE = 0.3

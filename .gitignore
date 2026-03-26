@@ -13,6 +13,15 @@ gesture_data.csv
 hand_data.json
 training_videos/
 
+# Build / dist
+build/
+dist/
+
+# Assignment doc & generated reports
+*.docx
+Personal_Contribution_Report.md
+Video_Script.md
+
 # Other
 *.json
 !pyproject.toml

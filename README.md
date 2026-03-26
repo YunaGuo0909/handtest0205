@@ -2,6 +2,28 @@
 
 Hand landmark detection via MediaPipe with **simple gestures** (rule-based) and **complex gestures** (LSTM). Maps to keyboard and mouse for games or accessibility.
 
+## Project Structure
+
+```
+handtest0205/
+├── main.py                  # Entry point: camera loop, dual-engine dispatch
+├── demo_gesture.py          # Alternative demo with different tuning
+├── hand_tracker.py          # MediaPipe HandLandmarker wrapper (detect + draw)
+├── gesture_recognizer.py    # Rule-based 14-gesture classifier (geometry)
+├── command_mapper.py        # Gesture → keyboard/mouse action mapping
+├── keyboard_controller.py   # Win32 keybd_event + scan code simulation
+├── config.py                # Global thresholds & parameters
+├── train_gesture.py         # LSTM model definition + training pipeline
+├── collect_data.py          # Gesture data collection (video / camera)
+├── hand_landmarker.task     # MediaPipe hand model (auto-download)
+├── gesture_model.pt         # Trained LSTM checkpoint
+├── gesture_data.csv         # Training data (landmarks per frame)
+├── training_videos/         # Raw video data organized by gesture label
+├── GestureControl.spec      # PyInstaller packaging config
+├── pyproject.toml           # Project metadata & dependencies
+└── requirements.txt         # pip dependencies
+```
+
 ## Requirements
 
 - Python 3.8+
